@@ -13,6 +13,9 @@
 
 With dedicated sections for live sports, regional trending content, and an integrated "Add to Library" feature, StreamDeck brings the entire world of digital entertainment into a single application.
 
+### 📥 Download
+[**Download Latest APK**](https://github.com/prashantjurel/streamdeck-mobile-android/releases/latest)
+
 *(Note: This repository contains the source code for the **Android Mobile** application. Companion applications for iOS and Android TV are managed in separate repositories.)*
 
 ---

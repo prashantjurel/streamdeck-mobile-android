@@ -16,6 +16,7 @@ import ContinueWatchingRow from '../components/ContinueWatchingRow';
 import TrendingRow from '../components/TrendingRow';
 import {fetchTrendingContent} from '../services/tmdb';
 import {loadContinueWatching, loadSettings} from '../utils/storage';
+import UpdateModal from '../components/UpdateModal';
 
 const HomeScreen = ({navigation}) => {
   const insets = useSafeAreaInsets();
@@ -113,6 +114,7 @@ const HomeScreen = ({navigation}) => {
   return (
     <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <UpdateModal />
       <ScrollView
         style={styles.scrollView}
         contentContainerStyle={{paddingTop: topPadding + 20}}
