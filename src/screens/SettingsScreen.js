@@ -194,9 +194,15 @@ const SettingsScreen = ({navigation}) => {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>SMART SEARCH (TMDB API)</Text>
           <View style={styles.card}>
-            <Text style={styles.fieldLabel}>TMDB API Key</Text>
+            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4}}>
+              <Text style={[styles.fieldLabel, {marginBottom: 0}]}>TMDB API Key</Text>
+              <TouchableOpacity onPress={() => Linking.openURL('https://www.themoviedb.org/settings/api')}>
+                <Text style={styles.pingLink}>Get API Key ↗</Text>
+              </TouchableOpacity>
+            </View>
             <Text style={styles.fieldHint}>
-              Enter your key from themoviedb.org for rich search.
+              Required for rich search. Tap the link above to generate your key.
+              {'\n\n'}<Text style={{fontWeight: 'bold', color: Colors.textSecondary}}>Quick Tip:</Text> When filling the TMDB API form, select "Developer" and simply type "Personal Use" or "N/A" for all the required fields (like App Name, URL, and Description) to skip the hassle!
             </Text>
             <TextInput
               style={styles.input}

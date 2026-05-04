@@ -154,54 +154,77 @@ const LiveTVScreen = ({navigation}) => {
     });
   };
 
-  const RenderMatchCard = ({ match }) => (
-    <TouchableOpacity
-      style={styles.matchCard}
-      activeOpacity={0.8}
-      onPress={() => handleQuickAccessPress({ name: match.quickAccessName })}
-    >
-      <View style={styles.matchThumbContainer}>
-        {match.isF1 ? (
-          <View style={styles.f1Thumb}>
-            <Text style={styles.f1Icon}>🏎️</Text>
-          </View>
-        ) : match.logo1 && match.logo2 ? (
-          <View style={styles.splitThumb}>
-            <View style={styles.teamSide}>
-              <Image source={{ uri: match.logo1 }} style={{ width: 40, height: 40 }} resizeMode="contain" />
-            </View>
-            <View style={styles.vsCircle}><Text style={styles.vsText}>VS</Text></View>
-            <View style={styles.teamSide}>
-              <Image source={{ uri: match.logo2 }} style={{ width: 40, height: 40 }} resizeMode="contain" />
-            </View>
-          </View>
-        ) : (
-          <View style={styles.genericThumb}>
-            <Text style={styles.genericIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
-          </View>
-        )}
+  const RenderMatchCard = ({ match }) => {
+    const [img1Error, setImg1Error] = useState(false);
+    const [img2Error, setImg2Error] = useState(false);
 
-        {match.status === 'LIVE' && (
-          <View style={styles.liveBadge}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveBadgeText}>LIVE</Text>
-          </View>
-        )}
-        {match.status === 'soon' && (
-          <View style={[styles.liveBadge, {backgroundColor: Colors.accentPurple}]}>
-            <Text style={styles.liveBadgeText}>SOON</Text>
-          </View>
-        )}
-      </View>
+    return (
+      <TouchableOpacity
+        style={styles.matchCard}
+        activeOpacity={0.8}
+        onPress={() => handleQuickAccessPress({ name: match.quickAccessName })}
+      >
+        <View style={styles.matchThumbContainer}>
+          {match.isF1 ? (
+            <View style={styles.f1Thumb}>
+              <Text style={styles.f1Icon}>🏎️</Text>
+            </View>
+          ) : match.logo1 && match.logo2 ? (
+            <View style={styles.splitThumb}>
+              <View style={styles.teamSide}>
+                {!img1Error ? (
+                  <Image 
+                    source={{ uri: match.logo1 }} 
+                    style={{ width: 40, height: 40 }} 
+                    resizeMode="contain" 
+                    onError={() => setImg1Error(true)}
+                  />
+                ) : (
+                  <Text style={styles.teamFallbackIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
+                )}
+              </View>
+              <View style={styles.vsCircle}><Text style={styles.vsText}>VS</Text></View>
+              <View style={styles.teamSide}>
+                {!img2Error ? (
+                  <Image 
+                    source={{ uri: match.logo2 }} 
+                    style={{ width: 40, height: 40 }} 
+                    resizeMode="contain" 
+                    onError={() => setImg2Error(true)}
+                  />
+                ) : (
+                  <Text style={styles.teamFallbackIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
+                )}
+              </View>
+            </View>
+          ) : (
+            <View style={styles.genericThumb}>
+              <Text style={styles.genericIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
+            </View>
+          )}
 
-      <View style={styles.matchInfo}>
-        <Text style={styles.matchTitle} numberOfLines={2}>{match.title}</Text>
-        <Text style={[styles.matchTime, match.status === 'LIVE' && {color: '#10b981'}]}>
-          {match.time}
-        </Text>
-      </View>
-    </TouchableOpacity>
-  );
+          {match.status === 'LIVE' && (
+            <View style={styles.liveBadge}>
+              <View style={styles.liveDot} />
+              <Text style={styles.liveBadgeText}>LIVE</Text>
+            </View>
+          )}
+          {match.status === 'soon' && (
+            <View style={[styles.liveBadge, {backgroundColor: Colors.accentPurple}]}>
+              <Text style={styles.liveBadgeText}>SOON</Text>
+            </View>
+          )}
+        </View>
+
+        <View style={styles.matchInfo}>
+          <Text style={styles.matchTitle} numberOfLines={2}>{match.title}</Text>
+          <Text style={[styles.matchTime, match.status === 'LIVE' && {color: '#10b981'}]}>
+            {match.time}
+          </Text>
+        </View>
+      </TouchableOpacity>
+    );
+  };
 
   return (
     <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>

@@ -67,6 +67,29 @@ const F1_2026_SCHEDULE = [
   }
 ];
 
+function formatLocalTime(dateStr, includeDate = true) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const month = months[d.getMonth()];
+  const day = d.getDate();
+  
+  let hours = d.getHours();
+  const minutes = d.getMinutes().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  hours = hours % 12;
+  hours = hours ? hours : 12; // the hour '0' should be '12'
+  
+  const timeStr = `${hours}:${minutes} ${ampm}`;
+  
+  if (includeDate) {
+    return `${month} ${day}, ${timeStr}`;
+  }
+  return timeStr;
+}
+
 function getUpdatedMatchStatus(match) {
   if (!match.startTime) return match;
 
@@ -94,17 +117,14 @@ function getUpdatedMatchStatus(match) {
 
   match.status = finalStatus;
 
-  const options = { hour: '2-digit', minute: '2-digit' };
-  const dateOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
-
   if (finalStatus === 'LIVE') {
     match.time = `Live - ${match.apiSummary || 'In Progress'}`;
   } else if (finalStatus === 'soon') {
-    match.time = `Starting Soon - ${new Date(match.startTime).toLocaleTimeString([], options)}`;
+    match.time = `Starting Soon - ${formatLocalTime(match.startTime, false)}`;
   } else if (finalStatus === 'completed') {
     match.time = `FT - ${match.apiSummary || ''}`;
   } else {
-    match.time = new Date(match.startTime).toLocaleString([], dateOptions);
+    match.time = formatLocalTime(match.startTime, true);
   }
 
   return match;
@@ -277,16 +297,16 @@ export async function fetchF1Data() {
       else if (isSoon) finalStatus = 'soon';
 
       if (finalStatus !== 'completed') {
-        const dateOptions = { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
         allSessions.push({
           id: `f1-${event.round}-${s.name}`,
           type: 'f1',
           title: `F1 ${event.countryFlag} • ${event.gpName} ${s.name}`,
           quickAccessName: 'F1 Live',
           status: finalStatus,
+          startTime: s.date, // Add startTime for proper sorting
           time: isSoon 
-            ? `Starting Soon - ${sessionDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}` 
-            : (isLive ? 'Live - In Progress' : sessionDate.toLocaleString([], dateOptions)),
+            ? `Starting Soon - ${formatLocalTime(s.date, false)}` 
+            : (isLive ? 'Live - In Progress' : formatLocalTime(s.date, true)),
           isF1: true
         });
       }

@@ -1,12 +1,31 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, Modal, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { View, Text, Modal, StyleSheet, TouchableOpacity, Image, Platform, Dimensions } from 'react-native';
 import ReactNativeBlobUtil from 'react-native-blob-util';
 import DeviceInfo from 'react-native-device-info';
-import Icon from 'react-native-vector-icons/Ionicons';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import LinearGradient from 'react-native-linear-gradient';
+import { Colors } from '../theme/colors';
+
+const { width } = Dimensions.get('window');
 
 const GITHUB_OWNER = 'prashantjurel';
 const GITHUB_REPO = 'streamdeck-mobile-android';
+
+
+
+const isNewerVersion = (latest, current) => {
+  if (!latest || !current) return false;
+  const latestParts = latest.replace(/[^0-9.]/g, '').split('.').map(Number);
+  const currentParts = current.replace(/[^0-9.]/g, '').split('.').map(Number);
+
+  for (let i = 0; i < Math.max(latestParts.length, currentParts.length); i++) {
+    const l = latestParts[i] || 0;
+    const c = currentParts[i] || 0;
+    if (l > c) return true;
+    if (l < c) return false;
+  }
+  return false;
+};
 
 export default function UpdateModal() {
   const [isVisible, setIsVisible] = useState(false);
@@ -25,21 +44,20 @@ export default function UpdateModal() {
       if (!response.ok) return;
 
       const data = await response.json();
-      const latestVersion = data.tag_name.replace('v', '');
+      const latestVersion = data.tag_name;
       const currentVersion = DeviceInfo.getVersion();
 
-      // Simple version comparison (e.g., '1.0.1' > '1.0.0')
-      // Note: This is a basic string comparison, usually sufficient for semantic versioning
-      // but might need a robust library like semver for complex cases.
-      if (latestVersion !== currentVersion && data.assets && data.assets.length > 0) {
-        const apkAsset = data.assets.find(asset => asset.name.endsWith('.apk'));
-        if (apkAsset) {
-          setUpdateInfo({
-            version: data.tag_name,
-            notes: data.body,
-            downloadUrl: apkAsset.browser_download_url,
-          });
-          setIsVisible(true);
+      if (isNewerVersion(latestVersion, currentVersion)) {
+        if (data.assets && data.assets.length > 0) {
+          const apkAsset = data.assets.find(asset => asset.name.endsWith('.apk'));
+          if (apkAsset) {
+            setUpdateInfo({
+              version: data.tag_name,
+              notes: data.body,
+              downloadUrl: apkAsset.browser_download_url,
+            });
+            setIsVisible(true);
+          }
         }
       }
     } catch (err) {
@@ -77,13 +95,12 @@ export default function UpdateModal() {
         setProgress(Math.round((received / total) * 100));
       });
 
-      // Once downloaded, trigger the Android Install intent
       if (res && res.path()) {
         ReactNativeBlobUtil.android.actionViewIntent(
           res.path(),
           'application/vnd.android.package-archive'
         );
-        setIsVisible(false); // Close the modal so they can install
+        setIsVisible(false);
       }
     } catch (err) {
       console.log('Download error: ', err);
@@ -96,41 +113,75 @@ export default function UpdateModal() {
   if (!isVisible) return null;
 
   return (
-    <Modal visible={isVisible} transparent={true} animationType="fade">
+    <Modal visible={isVisible} transparent={true} animationType="fade" statusBarTranslucent>
       <View style={styles.overlay}>
-        <LinearGradient colors={['rgba(20,20,30,0.95)', 'rgba(10,10,15,0.98)']} style={styles.modalContainer}>
-          <View style={styles.iconContainer}>
-            <Icon name="cloud-download" size={48} color="#FF3366" />
+        <LinearGradient
+          colors={['rgba(30, 30, 45, 0.98)', 'rgba(15, 15, 25, 1)']}
+          style={styles.modalContainer}
+        >
+          <View style={styles.logoContainer}>
+            <LinearGradient
+              colors={[Colors.accentPurple, Colors.accentPink]}
+              style={styles.logoGradient}
+            >
+              <Icon name="cloud-download" size={44} color="#FFF" />
+            </LinearGradient>
           </View>
           
           <Text style={styles.title}>Update Available!</Text>
-          <Text style={styles.subtitle}>Version {updateInfo?.version} is ready to install.</Text>
+          <Text style={styles.subtitle}>A new version {updateInfo?.version} is ready.</Text>
 
           <View style={styles.notesContainer}>
-            <Text style={styles.notesHeader}>What's New:</Text>
-            <Text style={styles.notesText} numberOfLines={5}>
-              {updateInfo?.notes || "General bug fixes and performance improvements."}
+            <View style={styles.notesHeaderRow}>
+              <Icon name="rocket-launch-outline" size={16} color={Colors.accentPink} />
+              <Text style={styles.notesHeader}>WHAT'S NEW</Text>
+            </View>
+            <Text style={styles.notesText} numberOfLines={6}>
+              {updateInfo?.notes || "Bug fixes and performance improvements to make your experience better."}
             </Text>
           </View>
 
-          {error && <Text style={styles.errorText}>{error}</Text>}
+          {error && (
+            <View style={styles.errorBox}>
+              <Icon name="alert-circle-outline" size={16} color={Colors.liveBadge} />
+              <Text style={styles.errorText}>{error}</Text>
+            </View>
+          )}
 
           {downloading ? (
-            <View style={styles.progressContainer}>
-              <Text style={styles.progressText}>Downloading... {progress}%</Text>
+            <View style={styles.progressSection}>
               <View style={styles.progressBarBackground}>
-                <View style={[styles.progressBarFill, { width: `${progress}%` }]} />
+                <LinearGradient
+                  colors={[Colors.accentPurple, Colors.accentPink]}
+                  start={{x: 0, y: 0}}
+                  end={{x: 1, y: 0}}
+                  style={[styles.progressBarFill, { width: `${progress}%` }]}
+                />
               </View>
+              <Text style={styles.progressText}>Downloading update... {progress}%</Text>
             </View>
           ) : (
-            <View style={styles.buttonContainer}>
-              <TouchableOpacity style={styles.cancelButton} onPress={() => setIsVisible(false)}>
-                <Text style={styles.cancelButtonText}>Later</Text>
+            <View style={styles.buttonSection}>
+              <TouchableOpacity
+                activeOpacity={0.7}
+                style={styles.cancelBtn}
+                onPress={() => setIsVisible(false)}
+              >
+                <Text style={styles.cancelBtnText}>Later</Text>
               </TouchableOpacity>
               
-              <TouchableOpacity style={styles.updateButton} onPress={startDownload}>
-                <LinearGradient colors={['#FF3366', '#FF5588']} style={styles.gradientButton}>
-                  <Text style={styles.updateButtonText}>Update Now</Text>
+              <TouchableOpacity
+                activeOpacity={0.8}
+                style={styles.updateBtn}
+                onPress={startDownload}
+              >
+                <LinearGradient
+                  colors={[Colors.accentPurple, Colors.accentPink]}
+                  start={{x: 0, y: 0}}
+                  end={{x: 1, y: 0}}
+                  style={styles.updateGradient}
+                >
+                  <Text style={styles.updateBtnText}>Update Now</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
@@ -144,116 +195,153 @@ export default function UpdateModal() {
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.7)',
+    backgroundColor: 'rgba(0,0,0,0.85)',
     justifyContent: 'center',
     alignItems: 'center',
-    padding: 20,
+    padding: 24,
   },
   modalContainer: {
-    width: '100%',
-    borderRadius: 24,
+    width: width * 0.9,
+    borderRadius: 32,
     padding: 24,
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.15)',
+    elevation: 20,
+    shadowColor: Colors.accentPurple,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.3,
+    shadowRadius: 20,
   },
-  iconContainer: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    backgroundColor: 'rgba(255,51,102,0.15)',
+  logoContainer: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    padding: 3,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    marginBottom: 20,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
   },
+  logoGradient: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 42,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
   title: {
-    fontSize: 24,
-    fontWeight: 'bold',
+    fontSize: 26,
+    fontWeight: '900',
     color: '#FFF',
-    marginBottom: 8,
+    marginBottom: 6,
+    letterSpacing: 0.5,
   },
   subtitle: {
     fontSize: 16,
-    color: 'rgba(255,255,255,0.7)',
-    marginBottom: 20,
+    color: Colors.textSecondary,
+    marginBottom: 24,
+    fontWeight: '500',
   },
   notesContainer: {
     width: '100%',
     backgroundColor: 'rgba(255,255,255,0.05)',
-    padding: 16,
-    borderRadius: 12,
-    marginBottom: 24,
+    padding: 18,
+    borderRadius: 20,
+    marginBottom: 30,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  notesHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    gap: 8,
   },
   notesHeader: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#FFF',
-    marginBottom: 8,
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.accentPink,
+    letterSpacing: 1,
   },
   notesText: {
     fontSize: 14,
-    color: 'rgba(255,255,255,0.6)',
-    lineHeight: 20,
+    color: Colors.textPrimary,
+    lineHeight: 22,
+    opacity: 0.8,
   },
-  progressContainer: {
+  progressSection: {
     width: '100%',
-    alignItems: 'center',
     marginBottom: 10,
   },
   progressText: {
-    color: '#FFF',
-    fontSize: 16,
-    marginBottom: 10,
-    fontWeight: 'bold',
+    color: Colors.textSecondary,
+    fontSize: 13,
+    marginTop: 12,
+    textAlign: 'center',
+    fontWeight: '600',
   },
   progressBarBackground: {
     width: '100%',
-    height: 8,
+    height: 10,
     backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 4,
+    borderRadius: 5,
     overflow: 'hidden',
   },
   progressBarFill: {
     height: '100%',
-    backgroundColor: '#FF3366',
-    borderRadius: 4,
+    borderRadius: 5,
   },
-  buttonContainer: {
+  buttonSection: {
     flexDirection: 'row',
     width: '100%',
-    justifyContent: 'space-between',
     gap: 12,
   },
-  cancelButton: {
+  cancelBtn: {
     flex: 1,
-    paddingVertical: 14,
-    borderRadius: 12,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.08)',
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
-  cancelButtonText: {
+  cancelBtnText: {
     color: '#FFF',
     fontSize: 16,
     fontWeight: '600',
   },
-  updateButton: {
-    flex: 1,
+  updateBtn: {
+    flex: 1.5,
+    height: 56,
   },
-  gradientButton: {
-    paddingVertical: 14,
-    borderRadius: 12,
+  updateGradient: {
+    flex: 1,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
+    elevation: 8,
+    shadowColor: Colors.accentPink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
   },
-  updateButtonText: {
+  updateBtnText: {
     color: '#FFF',
     fontSize: 16,
-    fontWeight: 'bold',
+    fontWeight: '800',
+  },
+  errorBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    gap: 6,
   },
   errorText: {
-    color: '#FF4444',
-    marginBottom: 15,
-    textAlign: 'center',
+    color: Colors.liveBadge,
+    fontSize: 14,
+    fontWeight: '500',
   }
 });

@@ -23,14 +23,15 @@ import PosterCard from '../components/PosterCard';
 import LinearGradient from 'react-native-linear-gradient';
 
 const PROVIDER_MAP = {
-  8: { id: 'netflix', name: 'Netflix', color: '#E50914', icon: 'N', searchUrl: 'https://www.netflix.com/search?q=' },
-  119: { id: 'prime', name: 'Prime Video', color: '#00A8E1', icon: 'P', searchUrl: 'https://www.primevideo.com/search?phrase=' },
-  122: { id: 'hotstar', name: 'Hotstar', color: '#001944', icon: 'H', searchUrl: 'https://www.hotstar.com/in/explore?search_query=' },
-  232: { id: 'jio', name: 'JioCinema', color: '#D11D56', icon: 'J', searchUrl: 'https://www.jiocinema.com/search/' },
-  3: { id: 'google', name: 'Google TV', color: '#4285F4', icon: 'G', searchUrl: 'https://play.google.com/store/search?q=' },
-  2: { id: 'apple', name: 'Apple TV', color: '#000000', icon: 'A', searchUrl: 'https://tv.apple.com/in/search?term=' },
-  220: { id: 'zee5', name: 'Zee5', color: '#8230C6', icon: 'Z', searchUrl: 'https://www.zee5.com/search?q=' },
-  121: { id: 'mxplayer', name: 'MX Player', color: '#005AFF', icon: 'X', searchUrl: 'https://www.mxplayer.in/search?q=' },
+  8: { id: 'netflix', name: 'Netflix', color: '#E50914', icon: 'N', logoUrl: 'https://image.tmdb.org/t/p/w200/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg', searchUrl: 'https://www.netflix.com/search?q=' },
+  119: { id: 'prime', name: 'Prime Video', color: '#00A8E1', icon: 'P', logoUrl: 'https://image.tmdb.org/t/p/w200/dQeAar5H991VYporEjUspolDarG.jpg', searchUrl: 'https://www.primevideo.com/search?phrase=' },
+  122: { id: 'hotstar', name: 'JioHotstar', color: '#001944', icon: 'H', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg', searchUrl: 'https://www.hotstar.com/in/explore?search_query=' },
+  232: { id: 'jio', name: 'JioCinema', color: '#D11D56', icon: 'J', logoUrl: 'https://image.tmdb.org/t/p/w200/oLE40IYhjRJbn8yWniCmqsVrtym.jpg', searchUrl: 'https://www.jiocinema.com/search/' },
+  3: { id: 'google', name: 'Google TV', color: '#4285F4', icon: 'G', logoUrl: 'https://image.tmdb.org/t/p/w200/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg', searchUrl: 'https://play.google.com/store/search?q=' },
+  2: { id: 'apple', name: 'Apple TV', color: '#000000', icon: 'A', logoUrl: 'https://image.tmdb.org/t/p/w200/6uhKBfmtzFqOcLousHwZuzcrScK.jpg', searchUrl: 'https://tv.apple.com/in/search?term=' },
+  220: { id: 'zee5', name: 'Zee5', color: '#8230C6', icon: 'Z', logoUrl: 'https://image.tmdb.org/t/p/w200/xEWgUq2tJyggisIUr0MBXQghHJh.jpg', searchUrl: 'https://www.zee5.com/search?q=' },
+  121: { id: 'mxplayer', name: 'MX Player', color: '#005AFF', icon: 'X', logoUrl: null, searchUrl: 'https://www.mxplayer.in/search?q=' },
+  237: { id: 'sonyliv', name: 'SonyLIV', color: '#2e2e6e', icon: 'S', logoUrl: 'https://image.tmdb.org/t/p/w200/tBhjAMfKnkzJNmOiMB8DsBx5QAp.jpg', searchUrl: 'https://www.sonyliv.com/search?q=' },
 };
 
 const ExploreScreen = ({navigation, route}) => {
@@ -136,13 +137,14 @@ const ExploreScreen = ({navigation, route}) => {
         found.push({ 
           id: 'moviebox', 
           name: 'MovieBox', 
-          color: '#FFB800', 
-          icon: 'M', 
+          color: '#E21D48', 
+          icon: '🍿',
+          logoUrl: null,
           searchUrl: `https://${domain}/search?q=` 
         });
       }
       if (!found.find(p => p.id === 'youtube')) {
-         found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', searchUrl: 'https://www.youtube.com/results?search_query=' });
+         found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
       }
 
       setAvailableProviders(found);
@@ -318,14 +320,14 @@ const ExploreScreen = ({navigation, route}) => {
         </ScrollView>
       )}
 
-      {/* Smart Provider Selection Modal */}
+      {/* Smart Provider Selection Modal — fade animation */}
       <Modal
         visible={showPicker}
         transparent
-        animationType="slide"
+        animationType="fade"
         onRequestClose={() => setShowPicker(false)}>
         <View style={styles.modalOverlay}>
-          <TouchableOpacity style={{flex: 1}} onPress={() => setShowPicker(false)} />
+          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
           <View style={styles.modalContent}>
              <View style={styles.modalHeader}>
                 <View style={styles.modalHandle} />
@@ -343,11 +345,20 @@ const ExploreScreen = ({navigation, route}) => {
                     key={provider.id} 
                     style={styles.providerItem}
                     onPress={() => handleSelectProvider(provider)}
+                    activeOpacity={0.7}
                   >
-                    <View style={[styles.providerIconBox, {backgroundColor: provider.color}]}>
-                      <Text style={styles.providerIconText}>{provider.icon}</Text>
+                    <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
+                      {provider.logoUrl ? (
+                        <Image
+                          source={{uri: provider.logoUrl}}
+                          style={styles.providerLogo}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Text style={styles.providerIconText}>{provider.icon}</Text>
+                      )}
                     </View>
-                    <Text style={styles.providerName}>{provider.name}</Text>
+                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
                   </TouchableOpacity>
                 ))}
                 {!checkingAvailability && availableProviders.length === 1 && availableProviders[0].id === 'youtube' && (
@@ -357,7 +368,7 @@ const ExploreScreen = ({navigation, route}) => {
                 )}
              </View>
 
-             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)}>
+             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
                 <Text style={styles.closeModalText}>Cancel</Text>
              </TouchableOpacity>
           </View>
@@ -414,45 +425,118 @@ const styles = StyleSheet.create({
   section: { marginBottom: Spacing.xxl },
   horizontalList: { paddingHorizontal: Spacing.xl },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
-  modalContent: {
-    backgroundColor: '#12121A',
-    borderTopLeftRadius: 30,
-    borderTopRightRadius: 30,
-    padding: Spacing.xl,
-    paddingBottom: 40,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+  // ── Modal: smooth fade overlay ──────────────────────
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
   },
-  modalHeader: { alignItems: 'center', marginBottom: Spacing.xl },
-  modalHandle: { width: 40, height: 4, backgroundColor: 'rgba(255,255,255,0.2)', borderRadius: 2, marginBottom: 20 },
-  modalTitle: { fontSize: 24, fontWeight: '900', color: '#fff', marginBottom: 4 },
-  modalSubtitle: { fontSize: 14, color: 'rgba(255,255,255,0.5)', fontWeight: '600' },
-  providerGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-start', gap: 20 },
-  providerItem: { width: '28%', alignItems: 'center', marginBottom: Spacing.lg },
+  modalDismissZone: {
+    flex: 1,
+  },
+  modalContent: {
+    backgroundColor: '#16161E',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.md,
+    paddingBottom: 44,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    elevation: 24,
+    shadowColor: '#000',
+    shadowOffset: {width: 0, height: -8},
+    shadowOpacity: 0.4,
+    shadowRadius: 20,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 2,
+    marginBottom: 20,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '800',
+    color: '#fff',
+    marginBottom: 4,
+    letterSpacing: 0.3,
+  },
+  modalSubtitle: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.45)',
+    fontWeight: '600',
+  },
+  providerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 16,
+    marginBottom: 8,
+  },
+  providerItem: {
+    width: 86,
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+  },
   providerIconBox: {
-    width: 68,
-    height: 68,
-    borderRadius: 18,
+    width: 64,
+    height: 64,
+    borderRadius: 16,
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 10,
-    elevation: 10,
+    marginBottom: 8,
+    overflow: 'hidden',
+    elevation: 6,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  providerIconText: { fontSize: 32, fontWeight: '900', color: '#fff' },
-  providerName: { fontSize: 12, fontWeight: '700', color: '#fff' },
-  noProvidersBox: { width: '100%', padding: Spacing.md, backgroundColor: 'rgba(255,255,255,0.03)', borderRadius: 12, marginTop: -10 },
-  noProvidersText: { color: 'rgba(255,255,255,0.4)', fontSize: 12, textAlign: 'center', lineHeight: 18 },
+  providerLogo: {
+    width: 44,
+    height: 44,
+    borderRadius: 8,
+  },
+  providerIconText: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#fff',
+  },
+  providerName: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+  },
+  noProvidersBox: {
+    width: '100%',
+    padding: Spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    marginTop: -4,
+  },
+  noProvidersText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
   closeModalBtn: {
-    marginTop: 10,
-    paddingVertical: 16,
+    marginTop: 8,
+    paddingVertical: 14,
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderRadius: 18,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    borderRadius: 16,
   },
-  closeModalText: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.4)' },
+  closeModalText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.35)',
+  },
 });
 
 export default ExploreScreen;

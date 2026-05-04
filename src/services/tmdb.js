@@ -159,6 +159,7 @@ export async function fetchWatchProviders(id, mediaType = 'movie') {
  */
 export function getImageUrl(path, size = 'w500') {
   if (!path) return null;
+  if (typeof path === 'number' || typeof path === 'object') return path; // Local require() support
   if (path.startsWith('http')) return path;
   return `https://image.tmdb.org/t/p/${size}${path}`;
 }
