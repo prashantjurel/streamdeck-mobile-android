@@ -21,9 +21,10 @@ import {
   saveSettings,
   getDefaultSettings,
   getApiKey,
-  saveApiKey,
+  saveApiKey as storageSaveApiKey,
 } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
+import {useApi} from '../context/ApiContext';
 
 const REGIONS = [
   { code: 'IN', name: 'India', flag: '🇮🇳' },
@@ -44,6 +45,8 @@ const SettingsScreen = ({navigation}) => {
   const [newProviderUrl, setNewProviderUrl] = useState('');
   const [sportsPingStatus, setSportsPingStatus] = useState('idle');
   const [saved, setSaved] = useState(false);
+
+  const { saveKey, checkKey } = useApi();
 
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
@@ -126,7 +129,11 @@ const SettingsScreen = ({navigation}) => {
     };
     await saveSettings(newSettings);
     if (apiKey) {
-      await saveApiKey(apiKey);
+      await saveKey(apiKey);
+    } else {
+      // If they cleared it, save empty string to storage and sync context
+      await storageSaveApiKey('');
+      await checkKey();
     }
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

@@ -44,7 +44,7 @@ export const ApiProvider = ({ children }) => {
   if (isInitializing) return null;
 
   return (
-    <ApiContext.Provider value={{ hasKey, requestKey, skipKey }}>
+    <ApiContext.Provider value={{ hasKey, requestKey, skipKey, saveKey, checkKey }}>
       {children}
       {isModalVisible && (
         <ApiKeySetupModal

@@ -145,21 +145,7 @@ const HomeScreen = ({navigation}) => {
     }
   }, [loadData, hasKey]);
 
-  if (!hasKey) {
-    return (
-      <View style={[styles.container, {paddingTop: topPadding, justifyContent: 'center', alignItems: 'center'}]}>
-        <Text style={{color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20}}>
-          Please add your TMDB API Key to access movies and TV shows.
-        </Text>
-        <TouchableOpacity 
-          style={{marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8}}
-          onPress={requestKey}
-        >
-          <Text style={{color: '#fff', fontWeight: 'bold'}}>Add API Key</Text>
-        </TouchableOpacity>
-      </View>
-    );
-  }
+  // Removed early return from here
 
   // Refresh continue watching when screen is focused
   useEffect(() => {
@@ -350,6 +336,22 @@ const HomeScreen = ({navigation}) => {
       appId: item.appId,
     });
   };
+
+  if (!hasKey) {
+    return (
+      <View style={[styles.screen, {paddingTop: topPadding, justifyContent: 'center', alignItems: 'center'}]}>
+        <Text style={{color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20}}>
+          Please add your TMDB API Key to access movies and TV shows.
+        </Text>
+        <TouchableOpacity 
+          style={{marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8}}
+          onPress={requestKey}
+        >
+          <Text style={{color: '#fff', fontWeight: 'bold'}}>Add API Key</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   if (loading) {
     return (
