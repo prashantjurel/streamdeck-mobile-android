@@ -1,5 +1,6 @@
 // StreamDeck Mobile — Home Screen
 import React, {useState, useEffect, useCallback} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
 import {
   View,
   ScrollView,
@@ -26,6 +27,7 @@ import {fetchTrendingContent, fetchWatchProviders, getImageUrl} from '../service
 import {loadContinueWatching, loadSettings, toggleWatchlistItem} from '../utils/storage';
 import UpdateModal from '../components/UpdateModal';
 import {fetchLiveSportsData} from '../services/sports';
+import {useApi} from '../context/ApiContext';
 
 const HomeScreen = ({navigation}) => {
   const insets = useSafeAreaInsets();
@@ -43,6 +45,16 @@ const HomeScreen = ({navigation}) => {
   const [availableProviders, setAvailableProviders] = useState([]);
   const [customProviders, setCustomProviders] = useState([]);
   const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
+
+  const { hasKey, requestKey } = useApi();
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasKey) {
+        requestKey();
+      }
+    }, [hasKey])
+  );
 
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
@@ -128,8 +140,26 @@ const HomeScreen = ({navigation}) => {
   }, []);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (hasKey) {
+      loadData();
+    }
+  }, [loadData, hasKey]);
+
+  if (!hasKey) {
+    return (
+      <View style={[styles.container, {paddingTop: topPadding, justifyContent: 'center', alignItems: 'center'}]}>
+        <Text style={{color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20}}>
+          Please add your TMDB API Key to access movies and TV shows.
+        </Text>
+        <TouchableOpacity 
+          style={{marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8}}
+          onPress={requestKey}
+        >
+          <Text style={{color: '#fff', fontWeight: 'bold'}}>Add API Key</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   // Refresh continue watching when screen is focused
   useEffect(() => {

@@ -49,7 +49,7 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
           <Text style={styles.title}>Welcome to StreamDeck</Text>
           <Text style={styles.subtitle}>
             To fetch movies and TV shows, you need to provide your own TMDB API Key.
-            This ensures your streaming data remains private and unrestricted.
+            Without a key, you can only use Adventure, Live TV, and Settings.
           </Text>
 
           <View style={styles.inputContainer}>

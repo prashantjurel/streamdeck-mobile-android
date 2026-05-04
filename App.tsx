@@ -5,9 +5,8 @@ import {NavigationContainer} from '@react-navigation/native';
 import {SafeAreaProvider} from 'react-native-safe-area-context';
 import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import RootNavigator from './src/navigation/BottomTabNavigator';
-import ApiKeySetupModal from './src/components/ApiKeySetupModal';
+import {ApiProvider} from './src/context/ApiContext';
 import {Colors} from './src/theme/colors';
-import {getApiKey} from './src/utils/storage';
 
 // Suppress known harmless warnings
 LogBox.ignoreLogs([
@@ -16,27 +15,11 @@ LogBox.ignoreLogs([
 ]);
 
 const App = () => {
-  const [isKeyReady, setIsKeyReady] = useState(false);
-  const [isChecking, setIsChecking] = useState(true);
-
-  useEffect(() => {
-    checkInitialKey();
-  }, []);
-
-  const checkInitialKey = async () => {
-    const key = await getApiKey();
-    if (key) {
-      setIsKeyReady(true);
-    }
-    setIsChecking(false);
-  };
-
-  if (isChecking) return null;
-
   return (
     <GestureHandlerRootView style={styles.container}>
       <SafeAreaProvider>
-        <NavigationContainer
+        <ApiProvider>
+          <NavigationContainer
           theme={{
             dark: true,
             colors: {
@@ -71,9 +54,9 @@ const App = () => {
             backgroundColor="transparent"
             translucent
           />
-          {isKeyReady && <RootNavigator />}
-          {!isKeyReady && <ApiKeySetupModal onKeySaved={() => setIsKeyReady(true)} onSkip={() => setIsKeyReady(true)} />}
+          <RootNavigator />
         </NavigationContainer>
+        </ApiProvider>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

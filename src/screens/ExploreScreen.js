@@ -1,5 +1,6 @@
 // StreamDeck Mobile — Explore Screen
 import React, {useState, useEffect, useCallback} from 'react';
+import {useFocusEffect} from '@react-navigation/native';
 import {
   View,
   Text,
@@ -21,6 +22,7 @@ import {loadSettings} from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
 import PosterCard from '../components/PosterCard';
 import LinearGradient from 'react-native-linear-gradient';
+import {useApi} from '../context/ApiContext';
 
 const PROVIDER_MAP = {
   8: { id: 'netflix', name: 'Netflix', color: '#E50914', icon: 'N', logoUrl: 'https://image.tmdb.org/t/p/w200/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg', searchUrl: 'https://www.netflix.com/search?q=' },
@@ -52,10 +54,22 @@ const ExploreScreen = ({navigation, route}) => {
 
   const topPadding = insets.top || StatusBar.currentHeight || 0;
 
+  const { hasKey, requestKey } = useApi();
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasKey) {
+        requestKey();
+      }
+    }, [hasKey])
+  );
+
   useEffect(() => {
-    loadExploreContent();
-    loadDomainSettings();
-  }, []);
+    if (hasKey) {
+      loadExploreContent();
+      loadDomainSettings();
+    }
+  }, [hasKey]);
 
   const loadDomainSettings = async () => {
     const settings = await loadSettings();
@@ -244,6 +258,22 @@ const ExploreScreen = ({navigation, route}) => {
       </TouchableOpacity>
     );
   };
+
+  if (!hasKey) {
+    return (
+      <View style={[styles.screen, {paddingTop: topPadding, justifyContent: 'center', alignItems: 'center'}]}>
+        <Text style={{color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20}}>
+          Please add your TMDB API Key to search and explore movies.
+        </Text>
+        <TouchableOpacity 
+          style={{marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8}}
+          onPress={requestKey}
+        >
+          <Text style={{color: '#fff', fontWeight: 'bold'}}>Add API Key</Text>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={styles.screen}>
