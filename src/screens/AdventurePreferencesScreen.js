@@ -13,7 +13,7 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
-import {ADVENTURE_CATEGORIES} from '../services/discovery';
+import {MOVIE_GENRES} from '../services/movieAdventure';
 
 const {width} = Dimensions.get('window');
 const COLUMN_WIDTH = (width - Spacing.xl * 2 - Spacing.md) / 2;
@@ -42,21 +42,25 @@ const AdventurePreferencesScreen = ({navigation}) => {
   };
 
   const toggleAll = () => {
-    if (selectedIds.length === ADVENTURE_CATEGORIES.length) {
+    if (selectedIds.length === MOVIE_GENRES.length) {
       setSelectedIds([]);
     } else {
-      setSelectedIds(ADVENTURE_CATEGORIES.map(c => c.id));
+      setSelectedIds(MOVIE_GENRES.map(c => c.id));
     }
   };
 
   const handleStart = async () => {
-    if (selectedIds.length === 0) return;
     try {
+      if (selectedIds.length === 0) {
+        // If 0 selections, navigate to questions screen
+        navigation.navigate('AdventureQuestions');
+        return;
+      }
+      
       await AsyncStorage.setItem(
         'streamdeck_adventure_prefs',
         JSON.stringify(selectedIds),
       );
-      // Navigation: since we are now in a stack, we go back or navigate to main
       navigation.navigate('AdventureMain');
     } catch (e) {}
   };
@@ -80,7 +84,7 @@ const AdventurePreferencesScreen = ({navigation}) => {
         </View>
 
         <View style={styles.grid}>
-          {ADVENTURE_CATEGORIES.map(cat => (
+          {MOVIE_GENRES.map(cat => (
             <TouchableOpacity
               key={cat.id}
               activeOpacity={0.7}
@@ -114,28 +118,27 @@ const AdventurePreferencesScreen = ({navigation}) => {
             activeOpacity={0.7}
           >
             <Text style={styles.secondaryActionText}>
-              {selectedIds.length === ADVENTURE_CATEGORIES.length ? 'Clear Selection' : 'Select All'}
+              {selectedIds.length === MOVIE_GENRES.length ? 'Clear Selection' : 'Select All'}
             </Text>
           </TouchableOpacity>
 
           <TouchableOpacity 
-            style={[styles.primaryActionBtn, selectedIds.length === 0 && styles.btnDisabled]} 
+            style={styles.primaryActionBtn} 
             onPress={handleStart}
-            disabled={selectedIds.length === 0}
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={selectedIds.length === 0 ? ['#2A2A35', '#1A1A25'] : ['#8B5CF6', '#D946EF']}
+              colors={selectedIds.length === 0 ? ['#F59E0B', '#EF4444'] : ['#8B5CF6', '#D946EF']}
               start={{x: 0, y: 0}}
               end={{x: 1, y: 1}}
               style={styles.primaryGradient}
             >
             <Text style={styles.primaryActionText}>
-              {selectedIds.length === ADVENTURE_CATEGORIES.length 
-                ? 'Go Wild! 🚀' 
+              {selectedIds.length === MOVIE_GENRES.length 
+                ? 'Mix Everything! 🍿' 
                 : selectedIds.length > 0 
-                  ? `Explore ${selectedIds.length} Topics` 
-                  : 'Select Topics'}
+                  ? `Explore ${selectedIds.length} Genres` 
+                  : 'Ask Me Questions 🤔'}
             </Text>
             </LinearGradient>
           </TouchableOpacity>

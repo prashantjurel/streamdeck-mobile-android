@@ -28,6 +28,7 @@ import {loadContinueWatching, loadSettings, toggleWatchlistItem} from '../utils/
 import UpdateModal from '../components/UpdateModal';
 import {fetchLiveSportsData} from '../services/sports';
 import {useApi} from '../context/ApiContext';
+import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
 
 const HomeScreen = ({navigation}) => {
   const insets = useSafeAreaInsets();
@@ -45,6 +46,7 @@ const HomeScreen = ({navigation}) => {
   const [availableProviders, setAvailableProviders] = useState([]);
   const [customProviders, setCustomProviders] = useState([]);
   const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
+  const [selectedMediaType, setSelectedMediaType] = useState('all'); // 'all', 'movie', 'tv'
 
   const { hasKey, requestKey } = useApi();
 
@@ -232,20 +234,6 @@ const HomeScreen = ({navigation}) => {
     const tmdbId = movie.id;
     setSelectedQuickItem({ name: title, mediaType, tmdbId });
 
-    // Same provider map as ExploreScreen — deep links + search URLs
-    const MOVIE_PROVIDER_MAP = {
-      8:   { id: 'netflix',   name: 'Netflix',      searchUrl: 'https://www.netflix.com/search?q=',         appScheme: 'nflx://www.netflix.com/search?q=' },
-      119: { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: 'primevideo://search?phrase=' },
-      9:   { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: 'primevideo://search?phrase=' }, // "with Ads" variant
-      122: { id: 'hotstar',   name: 'JioHotstar',    searchUrl: 'https://www.hotstar.com/in/explore?search_query=', appScheme: 'hotstar://search?q=' },
-      232: { id: 'jio',       name: 'JioCinema',     searchUrl: 'https://www.jiocinema.com/search/',          appScheme: 'jiocinema://search/' },
-      3:   { id: 'google',    name: 'Google TV',     searchUrl: 'https://play.google.com/store/search?q=',    appScheme: null },
-      2:   { id: 'apple',     name: 'Apple TV',      searchUrl: 'https://tv.apple.com/in/search?term=',       appScheme: 'videos://search?term=' },
-      220: { id: 'zee5',      name: 'Zee5',          searchUrl: 'https://www.zee5.com/search?q=',             appScheme: 'zee5://search?q=' },
-      237: { id: 'sonyliv',   name: 'SonyLIV',       searchUrl: 'https://www.sonyliv.com/search?q=',          appScheme: 'sonyliv://search?q=' },
-      121: { id: 'mxplayer',  name: 'MX Player',     searchUrl: 'https://www.mxplayer.in/search?q=',          appScheme: 'mxplayer://search?q=' },
-    };
-
     try {
       const providers = await fetchWatchProviders(movie.id, mediaType);
       const streamingProviders = [];
@@ -254,7 +242,7 @@ const HomeScreen = ({navigation}) => {
       // Flatrate (subscription streaming) providers
       if (providers?.flatrate) {
         providers.flatrate.forEach(p => {
-          const mapped = MOVIE_PROVIDER_MAP[p.provider_id];
+          const mapped = OTT_PROVIDER_MAP[p.provider_id];
           if (mapped && !seenIds.has(mapped.id)) {
             seenIds.add(mapped.id);
             streamingProviders.push({
@@ -293,40 +281,17 @@ const HomeScreen = ({navigation}) => {
   const handleSelectProvider = async (provider) => {
     setShowPicker(false);
     const title = selectedQuickItem?.name || '';
-    const query = encodeURIComponent(title);
     const mediaType = selectedQuickItem?.mediaType;
     const tmdbId = selectedQuickItem?.tmdbId;
 
-    // 1. Try native app deep link
-    if (provider.appScheme) {
-      try {
-        const schemeUrl = `${provider.appScheme}${query}`;
-        if (await Linking.canOpenURL(schemeUrl)) {
-          await Linking.openURL(schemeUrl);
-          return;
-        }
-      } catch (e) {}
-    }
-
-    // 2. Build URL — use searchUrl if available, else provider.url
-    let finalUrl;
-    if (provider.searchUrl) {
-      finalUrl = `${provider.searchUrl}${query}`;
-      // Special logic for Cineby (direct TMDB ID links)
-      if (provider.id === 'moviebox' && movieboxDomain.toLowerCase().includes('cineby.sc') && tmdbId && mediaType) {
-        const domain = movieboxDomain.replace('http://', '').replace('https://', '');
-        finalUrl = `https://${domain}/${mediaType}/${tmdbId}`;
-      }
-    } else if (provider.url) {
-      finalUrl = provider.url.trim();
-      if (!/^https?:\/\//i.test(finalUrl)) finalUrl = `https://${finalUrl}`;
-    } else {
-      return; // No URL to navigate to
-    }
-
-    navigation.navigate('WebView', {
-      url: finalUrl, title: `${title} on ${provider.name}`, appId: provider.id, color: provider.color,
-    });
+    await navigateToOTT(
+      provider,
+      title,
+      tmdbId,
+      mediaType,
+      movieboxDomain,
+      navigation
+    );
   };
 
   const handleContinueWatchingPress = item => {
@@ -336,6 +301,18 @@ const HomeScreen = ({navigation}) => {
       appId: item.appId,
     });
   };
+
+  const filterContent = (items, type) => {
+    if (type === 'all') return items;
+    if (type === 'live') return items.filter(item => item.isSports);
+    return items.filter(item => !item.isSports);
+  };
+
+  const MEDIA_TYPES = [
+    {id: 'all', name: 'All', icon: '🔥'},
+    {id: 'live', name: 'Live', icon: '🔴'},
+    {id: 'movies_series', name: 'Movies / Series', icon: '🎬'},
+  ];
 
   if (!hasKey) {
     return (
@@ -382,9 +359,36 @@ const HomeScreen = ({navigation}) => {
             progressBackgroundColor={Colors.bgSecondary}
           />
         }>
+        {/* Category Filter */}
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          style={styles.categoryScroll}
+          contentContainerStyle={styles.categoryContent}>
+          {MEDIA_TYPES.map(cat => (
+            <TouchableOpacity
+              key={cat.id}
+              style={[
+                styles.categoryChip,
+                selectedMediaType === cat.id && styles.categoryChipActive,
+              ]}
+              onPress={() => setSelectedMediaType(cat.id)}
+              activeOpacity={0.7}>
+              <Text style={styles.categoryIcon}>{cat.icon}</Text>
+              <Text
+                style={[
+                  styles.categoryText,
+                  selectedMediaType === cat.id && styles.categoryTextActive,
+                ]}>
+                {cat.name}
+              </Text>
+            </TouchableOpacity>
+          ))}
+        </ScrollView>
+
         {/* Hero Spotlight */}
         <HeroSpotlight
-          movies={heroItems}
+          movies={filterContent(heroItems, selectedMediaType)}
           onPlay={handlePlayPress}
           onAddToList={handleAddToLibrary}
           paused={showPicker}
@@ -499,6 +503,41 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 100,
+  },
+  categoryScroll: {
+    marginBottom: Spacing.lg,
+    marginTop: -Spacing.md,
+  },
+  categoryContent: {
+    paddingHorizontal: Spacing.xl,
+    gap: Spacing.sm,
+  },
+  categoryChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.sm,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    gap: 6,
+    marginRight: Spacing.sm,
+  },
+  categoryChipActive: {
+    backgroundColor: 'rgba(157, 78, 221, 0.2)',
+    borderColor: 'rgba(157, 78, 221, 0.5)',
+  },
+  categoryIcon: {
+    fontSize: 14,
+  },
+  categoryText: {
+    fontSize: 13,
+    color: 'rgba(255,255,255,0.5)',
+    fontWeight: '700',
+  },
+  categoryTextActive: {
+    color: '#D4A5FF',
   },
   // ── Modal: smooth fade overlay ──────────────────────
   modalOverlay: {

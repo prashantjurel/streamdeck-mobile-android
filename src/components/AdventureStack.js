@@ -12,7 +12,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import DiscoveryCard, {CARD_WIDTH, CARD_HEIGHT} from './DiscoveryCard';
 
-const {width} = Dimensions.get('window');
+const {width, height} = Dimensions.get('window');
 const SWIPE_THRESHOLD = width * 0.4;
 
 const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) => {
@@ -23,18 +23,11 @@ const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) 
   const scale = useSharedValue(isTopCard ? 1 : 0.9);
   const opacity = useSharedValue(isTopCard ? 1 : 0.5);
 
+  // RIGHT-PEEK stack logic
   useEffect(() => {
-    if (isTopCard) {
-      scale.value = withSpring(1, { damping: 20, stiffness: 200 });
-      opacity.value = withTiming(1, { duration: 300 });
-    } else if (isNextCard) {
-      scale.value = withSpring(0.9, { damping: 20, stiffness: 200 });
-      opacity.value = withTiming(0.5, { duration: 300 });
-    } else {
-      scale.value = withSpring(0.8, { damping: 20, stiffness: 200 });
-      opacity.value = withTiming(0, { duration: 300 });
-    }
-  }, [isTopCard, isNextCard, scale, opacity]);
+    // Top card is W-32 (from each side)
+    // Next card peeks out to the right
+  }, [isTopCard, isNextCard]);
 
   const handleSwipeComplete = useCallback((direction) => {
     onSwiped(direction, item);
@@ -68,48 +61,78 @@ const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) 
       translateY.value = event.translationY;
     })
     .onEnd((event) => {
-      if (Math.abs(event.translationX) > SWIPE_THRESHOLD) {
-        const direction = event.translationX > 0 ? 'right' : 'left';
+      const {velocityX, velocityY, translationX, translationY} = event;
+      
+      // Horizontal swipe (Skip/Save)
+      if (Math.abs(translationX) > SWIPE_THRESHOLD || Math.abs(velocityX) > 1000) {
+        const direction = translationX > 0 ? 'right' : 'left';
         translateX.value = withSpring(
-          event.translationX > 0 ? width * 1.5 : -width * 1.5, 
-          { velocity: event.velocityX },
-          () => { runOnJS(handleSwipeComplete)(direction); }
+          direction === 'right' ? width * 1.5 : -width * 1.5,
+          { velocity: velocityX, damping: 25, stiffness: 100, mass: 0.8 },
+          () => {} // Animation callback is no longer primary for state
         );
-      } else if (event.translationY < -SWIPE_THRESHOLD * 0.8) {
+        runOnJS(handleSwipeComplete)(direction);
+      } 
+      // Vertical swipe (Watch Now)
+      else if (translationY < -SWIPE_THRESHOLD * 0.8 || velocityY < -800) {
         translateY.value = withSpring(
-          -CARD_HEIGHT * 2, 
-          { velocity: event.velocityY },
-          () => { runOnJS(handleSwipeComplete)('up'); }
+          -height * 1.5,
+          { velocity: velocityY, damping: 25, stiffness: 100, mass: 0.8 },
+          () => {}
         );
-      } else {
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
+        runOnJS(handleSwipeComplete)('up');
+      } 
+      // Reset position
+      else {
+        translateX.value = withSpring(0, { damping: 25, stiffness: 200 });
+        translateY.value = withSpring(0, { damping: 25, stiffness: 200 });
       }
     });
 
   const animatedStyle = useAnimatedStyle(() => {
-    const rotate = interpolate(
+    // Side peeking logic:
+    // Top card: dist = 0
+    // Next card: dist = 1
+    const dist = isTopCard ? 0 : (isNextCard ? 1 : 2);
+    
+    const swipeRotate = interpolate(
       translateX.value,
       [-width / 2, 0, width / 2],
       [-10, 0, 10],
       Extrapolation.CLAMP
     );
 
+    // Shift background cards to the right to peek
+    const peekTranslateX = interpolate(
+      dist,
+      [0, 1, 2],
+      [0, 24, 44],
+      Extrapolation.CLAMP
+    );
+
+    const cardScale = interpolate(
+      dist,
+      [0, 1, 2],
+      [1, 0.96, 0.92],
+      Extrapolation.CLAMP
+    );
+
     return {
       transform: [
-        { translateX: translateX.value },
+        { translateX: translateX.value + peekTranslateX },
         { translateY: translateY.value },
-        { rotate: `${rotate}deg` },
-        { scale: scale.value }
+        { rotate: isTopCard ? `${swipeRotate}deg` : '0deg' },
+        { scale: cardScale }
       ],
-      opacity: opacity.value,
+      width: CARD_WIDTH,
+      opacity: isTopCard ? 1 : (isNextCard ? 0.8 : 0.4),
       zIndex: isTopCard ? 100 : (isNextCard ? 90 : 80),
     };
   });
 
   return (
     <GestureDetector gesture={gesture}>
-      <Animated.View style={[StyleSheet.absoluteFill, styles.cardWrapper, animatedStyle]} pointerEvents={isTopCard ? "auto" : "none"}>
+      <Animated.View style={[styles.cardWrapper, animatedStyle, { alignSelf: 'center' }]} pointerEvents={isTopCard ? "auto" : "none"}>
         <DiscoveryCard item={item} />
       </Animated.View>
     </GestureDetector>
@@ -166,8 +189,9 @@ const AdventureStack = forwardRef(({data, currentIndex, setCurrentIndex, onSwipe
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
+    // Center of the screen
     justifyContent: 'center',
+    alignItems: 'center',
   },
   cardWrapper: {
     position: 'absolute',

@@ -12,6 +12,7 @@ import {
   Switch,
   Linking,
 } from 'react-native';
+import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
@@ -407,7 +408,7 @@ const SettingsScreen = ({navigation}) => {
 
         {/* App Info */}
         <View style={styles.infoSection}>
-          <Text style={styles.infoText}>StreamDeck Mobile v1.0.0</Text>
+          <Text style={styles.infoText}>StreamDeck Mobile v{DeviceInfo.getVersion()}</Text>
           <Text style={styles.infoSubtext}>
             A mobile companion to the StreamDeck Desktop Hub
           </Text>

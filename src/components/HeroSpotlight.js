@@ -23,7 +23,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import {Colors, Spacing} from '../theme/colors';
 import {getImageUrl} from '../services/tmdb';
 
-const CARD_HEIGHT = 440;
+const CARD_HEIGHT = 520;
 const ANIM_DURATION = 400;
 const AUTO_PLAY_MS = 5000;
 
@@ -157,20 +157,20 @@ const StackedCard = memo(({movie, index, animIndex, onPlay, onAddToList, screenW
 
     // Cards that have scrolled past → hide
     if (dist < -0.5) {
-      return {opacity: 0, zIndex: -1, width: screenWidth - 40};
+      return {opacity: 0, zIndex: -1, width: screenWidth - 64};
     }
     // Cards too far in the future → hide
     if (dist > 2.5) {
-      return {opacity: 0, zIndex: -1, width: screenWidth - 40};
+      return {opacity: 0, zIndex: -1, width: screenWidth - 64};
     }
 
     const d = Math.max(0, Math.min(dist, 2));
 
     // ── RIGHT-PEEK: all cards same left edge, behind cards wider ──
-    // Front: W-40  →  Card2: W-28 (12px right peek)  →  Card3: W-18 (22px right peek)
+    // Front: W-64  →  Card2: W-52 (12px right peek)  →  Card3: W-42 (22px right peek)
     const cardWidth = interpolate(
       d, [0, 1, 2],
-      [screenWidth - 40, screenWidth - 28, screenWidth - 18],
+      [screenWidth - 64, screenWidth - 52, screenWidth - 42],
       Extrapolation.CLAMP,
     );
 
@@ -202,11 +202,17 @@ const HeroSpotlight = ({movies = [], onPlay, onAddToList, paused = false}) => {
 
   const [activeIndex, setActiveIndex] = useState(0);
   const activeRef = useRef(0);
+  const moviesRef = useRef(movies);
   const animIndex = useSharedValue(0);
   const timerRef = useRef(null);
 
+  // Keep moviesRef in sync for PanResponder
+  useEffect(() => {
+    moviesRef.current = movies;
+  }, [movies]);
+
   const goTo = useCallback((idx) => {
-    const clamped = Math.max(0, Math.min(idx, movies.length - 1));
+    const clamped = Math.max(0, Math.min(idx, moviesRef.current.length - 1));
     activeRef.current = clamped;
     setActiveIndex(clamped);
     animIndex.value = withTiming(clamped, {
@@ -236,6 +242,14 @@ const HeroSpotlight = ({movies = [], onPlay, onAddToList, paused = false}) => {
     return () => clearInterval(timerRef.current);
   }, [startAuto]);
 
+  // ── Reset when movies list changes (filtering) ────────
+  useEffect(() => {
+    activeRef.current = 0;
+    setActiveIndex(0);
+    animIndex.value = 0;
+    startAuto();
+  }, [movies.length, startAuto]);
+
   // ── Pause/resume when modal is open ──────────────────
   useEffect(() => {
     if (paused) {
@@ -255,10 +269,15 @@ const HeroSpotlight = ({movies = [], onPlay, onAddToList, paused = false}) => {
         clearInterval(timerRef.current);
       },
       onPanResponderRelease: (_, g) => {
-        if (g.dx < -50 && activeRef.current < movies.length - 1) {
-          goTo(activeRef.current + 1);
-        } else if (g.dx > 50 && activeRef.current > 0) {
-          goTo(activeRef.current - 1);
+        const currentMovies = moviesRef.current;
+        if (g.dx < -50) {
+          // Wrap around to 0 if at end, else go next
+          const nextIdx = activeRef.current + 1 >= currentMovies.length ? 0 : activeRef.current + 1;
+          goTo(nextIdx);
+        } else if (g.dx > 50) {
+          // Wrap around to end if at start, else go prev
+          const prevIdx = activeRef.current - 1 < 0 ? currentMovies.length - 1 : activeRef.current - 1;
+          goTo(prevIdx);
         }
         startAuto();
       },
@@ -312,7 +331,7 @@ const styles = StyleSheet.create({
   stackCard: {
     position: 'absolute',
     top: 0,
-    left: 16,
+    left: 32,
     height: CARD_HEIGHT,
     // Soft shadow for depth
     ...Platform.select({

@@ -12,6 +12,7 @@ import LibraryScreen from '../screens/LibraryScreen';
 import LiveTVScreen from '../screens/LiveTVScreen';
 import AdventureScreen from '../screens/AdventureScreen';
 import AdventurePreferencesScreen from '../screens/AdventurePreferencesScreen';
+import AdventureQuestionsScreen from '../screens/AdventureQuestionsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
 import WebViewScreen from '../screens/WebViewScreen';
 
@@ -24,6 +25,7 @@ const AdventureStack = () => {
     <Stack.Navigator screenOptions={{headerShown: false}}>
       <Stack.Screen name="AdventureMain" component={AdventureScreen} />
       <Stack.Screen name="AdventurePreferences" component={AdventurePreferencesScreen} />
+      <Stack.Screen name="AdventureQuestions" component={AdventureQuestionsScreen} />
     </Stack.Navigator>
   );
 };

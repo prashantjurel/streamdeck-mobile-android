@@ -14,8 +14,8 @@ import {getImageUrl} from '../services/tmdb';
 import {loadWatchlist, toggleWatchlistItem} from '../utils/storage';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.32;
-const CARD_HEIGHT = CARD_WIDTH * 1.5;
+const CARD_WIDTH = SCREEN_WIDTH * 0.28;
+const CARD_HEIGHT = CARD_WIDTH * 1.7;
 
 const PosterCard = ({movie, onPress, style, size = 'default'}) => {
   const [isSaved, setIsSaved] = useState(false);

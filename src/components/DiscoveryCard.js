@@ -1,19 +1,23 @@
-import React, {useEffect} from 'react';
-import {View, Text, StyleSheet, Image, Dimensions} from 'react-native';
+import React, {useEffect, useState} from 'react';
+import {View, Text, StyleSheet, Image, Dimensions, TouchableOpacity} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 
 const {width, height} = Dimensions.get('window');
-const CARD_WIDTH = width * 0.92;
-const CARD_HEIGHT = height * 0.60;
+const CARD_WIDTH = width * 0.80;
+const CARD_HEIGHT = height * 0.58;
 
 const DiscoveryCard = ({item}) => {
-  const [imgSrc, setImgSrc] = React.useState({uri: item.thumb});
-  const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1451187580459-43490279c0fa?q=80&w=1000&auto=format&fit=crop';
+  const [expanded, setExpanded] = useState(false);
+  const [imgSrc, setImgSrc] = useState({uri: item.thumb});
+  const FALLBACK_IMAGE = 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1000&auto=format&fit=crop'; // Cinema fallback
 
   useEffect(() => {
     setImgSrc({uri: item.thumb});
   }, [item.thumb]);
+
+  const year = item.release_date ? new Date(item.release_date).getFullYear() : '';
+  const rating = item.vote_average ? item.vote_average.toFixed(1) : '';
 
   return (
     <View style={styles.card}>
@@ -25,34 +29,37 @@ const DiscoveryCard = ({item}) => {
       />
       
       <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.6)', 'rgba(0,0,0,0.98)']}
-        locations={[0, 0.5, 1]}
+        colors={['transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.9)', '#000']}
+        locations={[0, 0.3, 0.7, 1]}
         style={styles.gradient}
       />
       
       <View style={[styles.badgeContainer, {left: Spacing.md, right: undefined}]}>
-        <View style={[styles.categoryBadge, {backgroundColor: 'rgba(0,0,0,0.6)', borderColor: 'rgba(255,255,255,0.2)', borderWidth: 1}]}>
+        <View style={styles.categoryBadge}>
           <Text style={styles.categoryText}>
-            {item.contentType === 'Video' ? '📺' : 
-             item.contentType === 'Podcast' ? '🎙️' : 
-             item.contentType === 'Documentary' ? '🎬' : 
-             item.contentType === 'Research' ? '🔬' : 
-             item.contentType === 'Education' ? '🎓' : 
-             item.contentType === 'Short Film' ? '🎞️' : '📄'} {item.contentType}
+            🍿 Movie {year ? `• ${year}` : ''}
           </Text>
         </View>
       </View>
 
-      <View style={styles.badgeContainer}>
-        <View style={styles.categoryBadge}>
-          <Text style={styles.categoryText}>{item.categoryLabel || item.category}</Text>
+      {rating ? (
+        <View style={styles.badgeContainer}>
+          <View style={[styles.categoryBadge, {backgroundColor: Colors.accentPink}]}>
+            <Text style={styles.categoryText}>⭐ {rating}</Text>
+          </View>
         </View>
-      </View>
+      ) : null}
 
       <View style={styles.content}>
-        <Text style={styles.source}>{item.source}</Text>
         <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
-        <Text style={styles.snippet} numberOfLines={3}>{item.snippet}</Text>
+        <TouchableOpacity activeOpacity={0.9} onPress={() => setExpanded(!expanded)}>
+          <Text style={styles.snippet} numberOfLines={expanded ? undefined : 4}>
+            {item.overview || 'No synopsis available for this movie.'}
+          </Text>
+          {!expanded && item.overview && item.overview.length > 100 && (
+            <Text style={styles.readMore}>Read More...</Text>
+          )}
+        </TouchableOpacity>
       </View>
     </View>
   );
@@ -79,7 +86,11 @@ const styles = StyleSheet.create({
     position: 'absolute',
   },
   gradient: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    height: '60%', // Fixed height for a more focused fade
   },
   badgeContainer: {
     position: 'absolute',
@@ -87,10 +98,12 @@ const styles = StyleSheet.create({
     right: Spacing.md,
   },
   categoryBadge: {
-    backgroundColor: Colors.accentPurple,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
     borderRadius: BorderRadius.full,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
     shadowColor: '#000',
     shadowOffset: {width: 0, height: 2},
     shadowOpacity: 0.3,
@@ -110,32 +123,31 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     paddingBottom: Spacing.xl,
   },
-  source: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '800',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-    opacity: 0.8, // Slightly more opaque
-  },
   title: {
     color: Colors.textPrimary,
-    fontSize: 22,
+    fontSize: 28,
     fontWeight: '900',
-    marginBottom: 8,
-    lineHeight: 26,
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: {width: -1, height: 1},
+    marginBottom: 10,
+    lineHeight: 34,
+    textShadowColor: 'rgba(0, 0, 0, 1)',
+    textShadowOffset: {width: 0, height: 2},
     textShadowRadius: 10,
   },
   snippet: {
-    color: Colors.textSecondary,
-    fontSize: 14,
-    lineHeight: 18,
-    opacity: 0.9, // Slightly more opaque
-    textShadowColor: 'rgba(0, 0, 0, 0.75)',
-    textShadowOffset: {width: -1, height: 1},
-    textShadowRadius: 10,
+    color: '#fff',
+    fontSize: 16,
+    lineHeight: 24,
+    fontWeight: '600',
+    textShadowColor: 'rgba(0, 0, 0, 1)',
+    textShadowOffset: {width: 0, height: 2},
+    textShadowRadius: 15, // Stronger shadow
+  },
+  readMore: {
+    color: Colors.accentPink,
+    fontSize: 12,
+    fontWeight: '800',
+    marginTop: 4,
+    textTransform: 'uppercase',
   },
 });
 

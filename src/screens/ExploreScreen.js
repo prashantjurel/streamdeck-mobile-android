@@ -23,18 +23,9 @@ import SectionHeader from '../components/SectionHeader';
 import PosterCard from '../components/PosterCard';
 import LinearGradient from 'react-native-linear-gradient';
 import {useApi} from '../context/ApiContext';
+import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
 
-const PROVIDER_MAP = {
-  8: { id: 'netflix', name: 'Netflix', color: '#E50914', icon: 'N', logoUrl: 'https://image.tmdb.org/t/p/w200/pbpMk2JmcoNnQwx5JGpXngfoWtp.jpg', searchUrl: 'https://www.netflix.com/search?q=' },
-  119: { id: 'prime', name: 'Prime Video', color: '#00A8E1', icon: 'P', logoUrl: 'https://image.tmdb.org/t/p/w200/dQeAar5H991VYporEjUspolDarG.jpg', searchUrl: 'https://www.primevideo.com/search?phrase=' },
-  122: { id: 'hotstar', name: 'JioHotstar', color: '#001944', icon: 'H', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg', searchUrl: 'https://www.hotstar.com/in/explore?search_query=' },
-  232: { id: 'jio', name: 'JioCinema', color: '#D11D56', icon: 'J', logoUrl: 'https://image.tmdb.org/t/p/w200/oLE40IYhjRJbn8yWniCmqsVrtym.jpg', searchUrl: 'https://www.jiocinema.com/search/' },
-  3: { id: 'google', name: 'Google TV', color: '#4285F4', icon: 'G', logoUrl: 'https://image.tmdb.org/t/p/w200/8z7rC8uIDaTM91X0ZfkRf04ydj2.jpg', searchUrl: 'https://play.google.com/store/search?q=' },
-  2: { id: 'apple', name: 'Apple TV', color: '#000000', icon: 'A', logoUrl: 'https://image.tmdb.org/t/p/w200/6uhKBfmtzFqOcLousHwZuzcrScK.jpg', searchUrl: 'https://tv.apple.com/in/search?term=' },
-  220: { id: 'zee5', name: 'Zee5', color: '#8230C6', icon: 'Z', logoUrl: 'https://image.tmdb.org/t/p/w200/xEWgUq2tJyggisIUr0MBXQghHJh.jpg', searchUrl: 'https://www.zee5.com/search?q=' },
-  121: { id: 'mxplayer', name: 'MX Player', color: '#005AFF', icon: 'X', logoUrl: null, searchUrl: 'https://www.mxplayer.in/search?q=' },
-  237: { id: 'sonyliv', name: 'SonyLIV', color: '#2e2e6e', icon: 'S', logoUrl: 'https://image.tmdb.org/t/p/w200/tBhjAMfKnkzJNmOiMB8DsBx5QAp.jpg', searchUrl: 'https://www.sonyliv.com/search?q=' },
-};
+
 
 const ExploreScreen = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
@@ -139,8 +130,8 @@ const ExploreScreen = ({navigation, route}) => {
         ];
         const uniqueIds = [...new Set(allProviders.map(p => p.provider_id))];
         uniqueIds.forEach(id => {
-          if (PROVIDER_MAP[id]) {
-            found.push(PROVIDER_MAP[id]);
+          if (OTT_PROVIDER_MAP[id]) {
+            found.push(OTT_PROVIDER_MAP[id]);
           }
         });
       }
@@ -173,50 +164,17 @@ const ExploreScreen = ({navigation, route}) => {
     const title = selectedMovie.title || selectedMovie.name;
     const mediaType = selectedMovie.media_type || (selectedMovie.title ? 'movie' : 'tv');
     const tmdbId = selectedMovie.id;
-    const query = encodeURIComponent(title);
-    
-    // Deep Link Schemes for Native Apps
-    const schemes = {
-      netflix: `nflx://www.netflix.com/search?q=${query}`,
-      hotstar: `hotstar://search?q=${query}`,
-      youtube: `youtube://results?search_query=${query}`,
-      prime: `primevideo://search?phrase=${query}`,
-      apple: `videos://search?term=${query}`,
-      jio: `jiocinema://search/${query}`,
-      zee5: `zee5://search?q=${query}`,
-      mxplayer: `mxplayer://search?q=${query}`,
-    };
 
-    // 1. Try to open the native app if it's a supported provider
-    if (schemes[provider.id]) {
-      try {
-        const canOpen = await Linking.canOpenURL(schemes[provider.id]);
-        if (canOpen) {
-          await Linking.openURL(schemes[provider.id]);
-          setShowPicker(false);
-          return; // Success: Opened in Native App
-        }
-      } catch (e) {
-        console.warn(`[Explore] Could not open native app for ${provider.id}:`, e);
-      }
-    }
-
-    // 2. Fallback to WebView if app not installed or not a deep-link provider
-    let finalUrl = `${provider.searchUrl}${query}`;
-
-    // Special Logic for Cineby (Direct TMDB ID links)
-    if (provider.id === 'moviebox' && movieboxDomain.toLowerCase().includes('cineby.sc')) {
-      const domain = movieboxDomain.replace('http://', '').replace('https://', '');
-      finalUrl = `https://${domain}/${mediaType}/${tmdbId}`;
-    }
-    
     setShowPicker(false);
-    navigation.navigate('WebView', {
-      url: finalUrl,
-      title: `${title} on ${provider.name}`,
-      appId: provider.id,
-      color: provider.color,
-    });
+    
+    await navigateToOTT(
+      provider,
+      title,
+      tmdbId,
+      mediaType,
+      movieboxDomain,
+      navigation
+    );
   };
 
   const renderSearchResult = ({item}) => {

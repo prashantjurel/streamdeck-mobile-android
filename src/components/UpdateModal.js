@@ -47,6 +47,8 @@ export default function UpdateModal() {
       const latestVersion = data.tag_name;
       const currentVersion = DeviceInfo.getVersion();
 
+      console.log(`[UpdateCheck] Latest: ${latestVersion}, Current: ${currentVersion}`);
+
       if (isNewerVersion(latestVersion, currentVersion)) {
         if (data.assets && data.assets.length > 0) {
           const apkAsset = data.assets.find(asset => asset.name.endsWith('.apk'));
