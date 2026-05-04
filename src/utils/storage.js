@@ -169,9 +169,9 @@ export function getDefaultSettings() {
 export async function getApiKey() {
   try {
     const key = await AsyncStorage.getItem(KEYS.TMDB_API_KEY);
-    return key || '4b7f91faba006196d244250a3f87ffce';
+    return key || null;
   } catch (e) {
-    return '4b7f91faba006196d244250a3f87ffce';
+    return null;
   }
 }
 
