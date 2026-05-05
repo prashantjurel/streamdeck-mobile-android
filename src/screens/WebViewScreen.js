@@ -15,10 +15,13 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {useFocusEffect} from '@react-navigation/native';
+import { useWindowDimensions } from 'react-native';
 
 const WebViewScreen = ({navigation, route}) => {
-  const {url, title, appId, color, isAdventure, cards, initialIndex, onUpdateIndex} = route.params;
+  const {url, title, appId, color, isAdventure, cards, initialIndex, onUpdateIndex, type} = route.params;
   const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
+  const isPiP = width < 400 || height < 400; // Rough threshold for PiP mode
   const webViewRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
@@ -32,6 +35,7 @@ const WebViewScreen = ({navigation, route}) => {
   // Safe area handling
   const topPadding = insets.top || StatusBar.currentHeight || 0;
   const bottomPadding = insets.bottom || 0;
+
 
   // Handle Android back button
   useFocusEffect(
@@ -116,38 +120,40 @@ const WebViewScreen = ({navigation, route}) => {
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       {/* Top Bar */}
-      <View style={styles.topBar}>
-        <TouchableOpacity
-          style={styles.backBtn}
-          onPress={() => navigation.goBack()}
-          activeOpacity={0.7}>
-          <Text style={styles.backIcon}>←</Text>
-        </TouchableOpacity>
+      {!isPiP && (
+        <View style={styles.topBar}>
+          <TouchableOpacity
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}>
+            <Text style={styles.backIcon}>←</Text>
+          </TouchableOpacity>
 
-        <View style={styles.titleSection}>
-          <View style={[styles.appDot, {backgroundColor: themeColor}]} />
-          <Text style={styles.title} numberOfLines={1}>
-            {pageTitle}
-          </Text>
-        </View>
+          <View style={styles.titleSection}>
+            <View style={[styles.appDot, {backgroundColor: themeColor}]} />
+            <Text style={styles.title} numberOfLines={1}>
+              {pageTitle}
+            </Text>
+          </View>
 
-        <View style={styles.actions}>
-          {canGoBack && (
+          <View style={styles.actions}>
+            {canGoBack && (
+              <TouchableOpacity
+                style={styles.actionBtn}
+                onPress={() => webViewRef.current?.goBack()}
+                activeOpacity={0.7}>
+                <Text style={styles.actionIcon}>◀</Text>
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               style={styles.actionBtn}
-              onPress={() => webViewRef.current?.goBack()}
+              onPress={() => webViewRef.current?.reload()}
               activeOpacity={0.7}>
-              <Text style={styles.actionIcon}>◀</Text>
+              <Text style={styles.actionIcon}>⟲</Text>
             </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={styles.actionBtn}
-            onPress={() => webViewRef.current?.reload()}
-            activeOpacity={0.7}>
-            <Text style={styles.actionIcon}>⟲</Text>
-          </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      )}
 
       {/* Loading Bar */}
       {loading && (
@@ -182,10 +188,28 @@ const WebViewScreen = ({navigation, route}) => {
           if (isExternal) return false;
           return true;
         }}
-        renderLoading={() => (
-          <View style={styles.loadingOverlay}>
-            <ActivityIndicator size="large" color={themeColor} />
-            <Text style={styles.loadingText}>Loading Discovery...</Text>
+        renderError={(errorName, errorCode, errorDesc) => (
+          <View style={styles.errorOverlay}>
+            <Text style={styles.errorIcon}>📡</Text>
+            <Text style={styles.errorTitle}>Provider Unavailable</Text>
+            <Text style={styles.errorSubtitle}>
+              This movie link seems to be broken or blocked. Please try changing your MovieBox provider in Settings.
+            </Text>
+            <TouchableOpacity
+              style={styles.errorActionBtn}
+              onPress={() => navigation.navigate('MainTabs', { 
+                screen: 'Settings',
+                params: { highlightSection: type === 'sports' ? 'sports' : 'moviebox' }
+              })}
+              activeOpacity={0.8}>
+              <LinearGradient
+                colors={[Colors.accentPurple, Colors.accentPink]}
+                start={{x: 0, y: 0}}
+                end={{x: 1, y: 0}}
+                style={styles.errorActionGradient}>
+                <Text style={styles.errorActionText}>Go to Settings</Text>
+              </LinearGradient>
+            </TouchableOpacity>
           </View>
         )}
         userAgent="Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Mobile Safari/537.36"
@@ -373,6 +397,48 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '800',
     textTransform: 'uppercase',
+  },
+  errorOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: Colors.bgPrimary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: Spacing.xxl,
+  },
+  errorIcon: {
+    fontSize: 64,
+    marginBottom: Spacing.xl,
+  },
+  errorTitle: {
+    color: Colors.textPrimary,
+    fontSize: FontSizes.xl,
+    fontWeight: '800',
+    marginBottom: Spacing.md,
+    textAlign: 'center',
+  },
+  errorSubtitle: {
+    color: Colors.textMuted,
+    fontSize: FontSizes.md,
+    textAlign: 'center',
+    lineHeight: 22,
+    marginBottom: Spacing.xxl,
+  },
+  errorActionBtn: {
+    width: '80%',
+    height: 54,
+    borderRadius: 27,
+    overflow: 'hidden',
+    elevation: 8,
+  },
+  errorActionGradient: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  errorActionText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
   },
 });
 

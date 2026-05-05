@@ -68,6 +68,7 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
     title: `${movieTitle} on ${provider.name}`,
     appId: provider.id,
     color: provider.color || '#333',
+    type: provider.id === 'moviebox' ? 'moviebox' : (provider.id.startsWith('custom') || provider.id === 'hotstar' || provider.id === 'fancode' || provider.id === 'sonyliv' ? 'sports' : 'movie'),
   });
   
   return false; // Opened in WebView

@@ -1,6 +1,6 @@
 // StreamDeck Mobile — Hero Spotlight (Vertical Stacked Carousel)
 // Inspired by JioHotstar's stacked card UI — side-peeking stack
-import React, {useState, useEffect, useRef, useCallback, memo} from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import {
   View,
   Text,
@@ -15,23 +15,72 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withRepeat,
+  withSequence,
   interpolate,
   Extrapolation,
   Easing,
 } from 'react-native-reanimated';
 import LinearGradient from 'react-native-linear-gradient';
-import {Colors, Spacing} from '../theme/colors';
-import {getImageUrl} from '../services/tmdb';
+import { Colors, Spacing } from '../theme/colors';
+import { getImageUrl } from '../services/tmdb';
 
 const CARD_HEIGHT = 520;
 const ANIM_DURATION = 400;
 const AUTO_PLAY_MS = 5000;
 
 // ═══════════════════════════════════════════════════════════
+// BlinkingLiveBadge — Animated pulsing red badge
+// ═══════════════════════════════════════════════════════════
+const BlinkingLiveBadge = memo(() => {
+  const opacity = useSharedValue(1);
+
+  useEffect(() => {
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(0.4, { duration: 800, easing: Easing.inOut(Easing.ease) }),
+        withTiming(1, { duration: 800, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+  }, []);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    opacity: opacity.value,
+  }));
+
+  return (
+    <Animated.View style={[styles.liveBadgeContainer, animatedStyle]}>
+      <View style={styles.liveBadgeDot} />
+      <Text style={styles.liveBadgeText}>LIVE</Text>
+    </Animated.View>
+  );
+});
+
+// TeamLogo — Logo with initials fallback
+const TeamLogo = memo(({uri, initials}) => {
+  const [error, setError] = useState(false);
+  
+  if (error || !uri) {
+    return <Text style={styles.teamInitials}>{initials || '?'}</Text>;
+  }
+  
+  return (
+    <Image 
+      source={{uri}} 
+      style={styles.largeTeamLogo} 
+      resizeMode="contain"
+      onError={() => setError(true)}
+    />
+  );
+});
+
+// ═══════════════════════════════════════════════════════════
 // HeroCard — Reusable poster card for movies, series, live sports
 // The card IS the poster. Content bottom-aligned over gradient.
 // ═══════════════════════════════════════════════════════════
-const HeroCard = memo(({movie, onPlay, onAddToList}) => {
+const HeroCard = memo(({ movie, onPlay, onAddToList }) => {
   const backdropUrl = getImageUrl(movie.backdrop_path, 'original');
   const title = movie.title || movie.name || 'Unknown';
   const isSports = movie.isSports;
@@ -44,7 +93,7 @@ const HeroCard = memo(({movie, onPlay, onAddToList}) => {
       if (m.status === 'LIVE') parts.push('LIVE NOW');
       else if (m.time) parts.push(m.time);
       if (m.type) {
-        const sportMap = {football: 'Football', cricket: 'Cricket', f1: 'Formula 1'};
+        const sportMap = { football: 'Football', cricket: 'Cricket', f1: 'Formula 1' };
         parts.push(sportMap[m.type] || m.type);
       }
       return parts;
@@ -69,50 +118,90 @@ const HeroCard = memo(({movie, onPlay, onAddToList}) => {
     return parts;
   };
 
+  const [currentBackdrop, setCurrentBackdrop] = useState(backdropUrl);
+
+  // Sync state with prop whenever backdropUrl changes
+  useEffect(() => {
+    setCurrentBackdrop(backdropUrl);
+  }, [backdropUrl]);
+
   const metaParts = buildMeta();
 
   return (
     <View style={styles.heroCard}>
       {/* ── Full-bleed poster ────────────────────────── */}
-      {backdropUrl ? (
-        <Image
-          source={typeof backdropUrl === 'string' ? {uri: backdropUrl} : backdropUrl}
-          style={styles.poster}
-          resizeMode="cover"
-        />
-      ) : (
-        <View style={[styles.poster, {backgroundColor: '#1A1A2E'}]} />
-      )}
+      <Image
+        source={typeof currentBackdrop === 'string' ? { uri: currentBackdrop } : currentBackdrop}
+        style={styles.poster}
+        resizeMode="cover"
+        onError={() => {
+          // If the primary image fails, use a high-quality sport-specific fallback
+          const fallback = isSports 
+            ? (movie.match?.type === 'f1' 
+                ? 'https://images.unsplash.com/photo-1551221281-224451000632?q=80&w=1200' 
+                : 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=1200')
+            : 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1200';
+          setCurrentBackdrop({ uri: fallback });
+        }}
+      />
 
       {/* ── Bottom gradient scrim for text readability ── */}
       <LinearGradient
         colors={[
           'transparent',
-          'rgba(0,0,0,0.12)',
-          'rgba(0,0,0,0.40)',
-          'rgba(0,0,0,0.72)',
-          'rgba(0,0,0,0.90)',
+          'rgba(0,0,0,0.15)',
+          'rgba(0,0,0,0.45)',
+          'rgba(0,0,0,0.85)',
+          'rgba(0,0,0,1.0)',
         ]}
-        locations={[0, 0.2, 0.45, 0.75, 1]}
-        start={{x: 0, y: 0}}
-        end={{x: 0, y: 1}}
+        locations={[0, 0.25, 0.5, 0.8, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
         style={styles.gradient}
       />
+
+      {/* ── Centered Team Logos for Sports ────────────────── */}
+      {/* Sports Logo Overlays (Hide for F1) */}
+      {isSports && movie.match?.type !== 'f1' && movie.match?.logo1 && movie.match?.logo2 && (
+        <View style={styles.centeredLogoStage}>
+          <View style={styles.logoRow}>
+            {movie.match.type === 'f1' ? (
+              <View style={[styles.largeTeamCircle, { width: 120, height: 120 }]}>
+                <TeamLogo uri={movie.match.logo1} initials={movie.match.initials1} />
+              </View>
+            ) : (
+              <>
+                <View style={styles.largeTeamCircle}>
+                  <TeamLogo uri={movie.match.logo1} initials={movie.match.initials1} />
+                </View>
+                <View style={styles.largeVsBadge}>
+                  <Text style={styles.largeVsText}>VS</Text>
+                </View>
+                <View style={styles.largeTeamCircle}>
+                  <TeamLogo uri={movie.match.logo2} initials={movie.match.initials2} />
+                </View>
+              </>
+            )}
+          </View>
+        </View>
+      )}
 
       {/* ── Bottom-aligned content ─────────────────────── */}
       <View style={styles.contentOverlay}>
         {/* Left: tag + title + meta */}
         <View style={styles.textCol}>
           {isSports ? (
-            <View style={styles.liveTag}>
-              <View style={styles.liveDot} />
-              <Text style={styles.liveText}>LIVE</Text>
-            </View>
+            <BlinkingLiveBadge />
           ) : (
             <Text style={styles.trendingTag}>Trending Now</Text>
           )}
 
-          <Text style={styles.title} numberOfLines={2}>{title}</Text>
+          <Text
+            style={[styles.title, isSports && { fontSize: 24, lineHeight: 30 }]}
+            numberOfLines={isSports ? 3 : 2}
+          >
+            {title}
+          </Text>
 
           {metaParts.length > 0 && (
             <Text style={styles.meta}>{metaParts.join('  ·  ')}</Text>
@@ -151,17 +240,17 @@ const HeroCard = memo(({movie, onPlay, onAddToList}) => {
 //   - The wider behind cards extend further to the RIGHT
 //   - z-index keeps the front card on top
 // ═══════════════════════════════════════════════════════════
-const StackedCard = memo(({movie, index, animIndex, onPlay, onAddToList, screenWidth}) => {
+const StackedCard = memo(({ movie, index, animIndex, onPlay, onAddToList, screenWidth }) => {
   const animStyle = useAnimatedStyle(() => {
     const dist = index - animIndex.value;
 
     // Cards that have scrolled past → hide
     if (dist < -0.5) {
-      return {opacity: 0, zIndex: -1, width: screenWidth - 64};
+      return { opacity: 0, zIndex: -1, width: screenWidth - 64 };
     }
     // Cards too far in the future → hide
     if (dist > 2.5) {
-      return {opacity: 0, zIndex: -1, width: screenWidth - 64};
+      return { opacity: 0, zIndex: -1, width: screenWidth - 64 };
     }
 
     const d = Math.max(0, Math.min(dist, 2));
@@ -197,8 +286,8 @@ const StackedCard = memo(({movie, index, animIndex, onPlay, onAddToList, screenW
 // ═══════════════════════════════════════════════════════════
 // HeroSpotlight — The stacked carousel container
 // ═══════════════════════════════════════════════════════════
-const HeroSpotlight = ({movies = [], onPlay, onAddToList, paused = false}) => {
-  const {width: SCREEN_WIDTH} = useWindowDimensions();
+const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => {
+  const { width: SCREEN_WIDTH } = useWindowDimensions();
 
   const [activeIndex, setActiveIndex] = useState(0);
   const activeRef = useRef(0);
@@ -289,7 +378,7 @@ const HeroSpotlight = ({movies = [], onPlay, onAddToList, paused = false}) => {
   return (
     <View style={styles.wrapper} {...panResponder.panHandlers}>
       {/* Stack container — full width, cards centered inside */}
-      <View style={[styles.stackContainer, {height: CARD_HEIGHT + 14}]}>
+      <View style={[styles.stackContainer, { height: CARD_HEIGHT + 14 }]}>
         {movies.map((movie, idx) => (
           <StackedCard
             key={`${movie.id}-${idx}`}
@@ -340,7 +429,7 @@ const styles = StyleSheet.create({
       },
       ios: {
         shadowColor: '#000',
-        shadowOffset: {width: 0, height: 8},
+        shadowOffset: { width: 0, height: 8 },
         shadowOpacity: 0.45,
         shadowRadius: 16,
       },
@@ -351,6 +440,7 @@ const styles = StyleSheet.create({
   heroCard: {
     flex: 1,
     borderRadius: 20,
+    backgroundColor: '#000000', 
     overflow: 'hidden',
   },
 
@@ -406,41 +496,109 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
     marginBottom: 6,
     textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: {width: 0, height: 1},
+    textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
-  liveTag: {
+  liveBadgeContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginBottom: 6,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
     backgroundColor: Colors.liveBadge,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    gap: 6,
+    elevation: 4,
   },
-  liveText: {
-    color: Colors.liveBadge,
-    fontSize: 13,
-    fontWeight: '800',
+  liveBadgeDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#fff',
+  },
+  liveBadgeText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900',
     letterSpacing: 1,
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: {width: 0, height: 1},
-    textShadowRadius: 3,
   },
 
   // ── Title (large, bold, clearly visible) ────────────
   title: {
     color: '#fff',
-    fontSize: 30,
+    fontSize: 28,
     fontWeight: '900',
-    lineHeight: 36,
+    lineHeight: 34,
     marginBottom: 8,
     textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowOffset: {width: 0, height: 2},
+    textShadowOffset: { width: 0, height: 2 },
     textShadowRadius: 6,
+  },
+
+  // ── Centered Large Team Logos ──────────────────────
+  centeredLogoStage: {
+    position: 'absolute',
+    top: '32%',
+    left: 0,
+    right: 0,
+    height: 140,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  logoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 20,
+  },
+  largeTeamCircle: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
+    backgroundColor: '#FFFFFF', // Solid white background for max visibility
+    borderWidth: 3,
+    borderColor: '#FFFFFF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    // Strong shadow for depth
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+    elevation: 12,
+  },
+  largeTeamLogo: {
+    width: 75,
+    height: 75,
+    // Small shadow to ensure colorful logos pop on white
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.15,
+    shadowRadius: 4,
+  },
+  largeVsBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#000',
+    borderWidth: 2.5,
+    borderColor: 'rgba(255,255,255,0.4)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 15,
+  },
+  largeVsText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  teamInitials: {
+    color: '#1A1A2E',
+    fontSize: 24,
+    fontWeight: 'bold',
   },
 
   // ── Meta (bigger, clearer) ──────────────────────────
@@ -449,7 +607,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: '600',
     textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: {width: 0, height: 1},
+    textShadowOffset: { width: 0, height: 1 },
     textShadowRadius: 3,
   },
 

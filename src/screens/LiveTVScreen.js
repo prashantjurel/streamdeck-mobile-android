@@ -27,7 +27,6 @@ const SPORT_CATEGORIES = [
   {id: 'cricket', name: 'Cricket', icon: '🏏'},
   {id: 'football', name: 'Football', icon: '⚽'},
   {id: 'f1', name: 'F1 Racing', icon: '🏎️'},
-  {id: 'wwe', name: 'WWE', icon: '🤼'},
 ];
 
 const PROVIDER_CONFIG = {
@@ -39,9 +38,6 @@ const PROVIDER_CONFIG = {
   ],
   'F1 Live': [
     { id: 'fancode', name: 'FanCode', appScheme: 'fancode://', url: 'https://fancode.com', color: '#FF6B35', icon: '⚽' }
-  ],
-  'WWE': [
-    { id: 'sonyliv', name: 'SonyLIV', appScheme: 'sonyliv://', url: 'https://www.sonyliv.com', color: '#2e2e6e', icon: '📺' }
   ]
 };
 
@@ -165,11 +161,20 @@ const LiveTVScreen = ({navigation}) => {
         onPress={() => handleQuickAccessPress({ name: match.quickAccessName })}
       >
         <View style={styles.matchThumbContainer}>
-          {match.isF1 ? (
-            <View style={styles.f1Thumb}>
-              <Text style={styles.f1Icon}>🏎️</Text>
-            </View>
-          ) : match.logo1 && match.logo2 ? (
+          <Image 
+            source={{ 
+              uri: match.type === 'f1' 
+                ? 'https://images.pexels.com/photos/36920232/pexels-photo-36920232.jpeg?auto=compress&cs=tinysrgb&w=1200'
+                : match.type === 'football'
+                ? 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?auto=format&fit=crop&q=80&w=800'
+                : 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?auto=format&fit=crop&q=80&w=800'
+            }} 
+            style={[StyleSheet.absoluteFill, { borderRadius: 12 }]} 
+            resizeMode="cover"
+          />
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.3)', borderRadius: 12 }]} />
+          
+          {match.type === 'f1' ? null : match.logo1 && match.logo2 ? (
             <View style={styles.splitThumb}>
               <View style={styles.teamSide}>
                 {!img1Error ? (
@@ -180,7 +185,9 @@ const LiveTVScreen = ({navigation}) => {
                     onError={() => setImg1Error(true)}
                   />
                 ) : (
-                  <Text style={styles.teamFallbackIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
+                  <Text style={styles.teamFallbackIcon}>
+                    {match.type === 'football' ? '⚽' : match.type === 'cricket' ? '🏏' : '🏁'}
+                  </Text>
                 )}
               </View>
               <View style={styles.vsCircle}><Text style={styles.vsText}>VS</Text></View>
@@ -193,13 +200,17 @@ const LiveTVScreen = ({navigation}) => {
                     onError={() => setImg2Error(true)}
                   />
                 ) : (
-                  <Text style={styles.teamFallbackIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
+                  <Text style={styles.teamFallbackIcon}>
+                    {match.type === 'football' ? '⚽' : match.type === 'cricket' ? '🏏' : '🏁'}
+                  </Text>
                 )}
               </View>
             </View>
           ) : (
             <View style={styles.genericThumb}>
-              <Text style={styles.genericIcon}>{match.type === 'football' ? '⚽' : '🏏'}</Text>
+              <Text style={styles.genericIcon}>
+                {match.type === 'football' ? '⚽' : match.type === 'cricket' ? '🏏' : '🏁'}
+              </Text>
             </View>
           )}
 
@@ -323,7 +334,6 @@ const LiveTVScreen = ({navigation}) => {
               {name: 'IPL Live', icon: '🏏', url: 'https://www.hotstar.com', color: '#1F74DB'},
               {name: 'Football', icon: '⚽', url: 'https://sportslivetoday.com', color: '#38003C'},
               {name: 'F1 Live', icon: '🏎️', url: 'https://fancode.com', color: '#E10600'},
-              {name: 'WWE', icon: '🤼', url: 'https://www.sonyliv.com', color: '#D4002F'},
               {name: 'Others', icon: '🌍', url: 'https://fmhy.net/video#live-tv', color: '#8B5CF6'},
             ].map((item, idx) => (
               <TouchableOpacity
@@ -473,12 +483,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   teamSide: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(255,255,255,0.05)',
+    width: 54,
+    height: 54,
+    borderRadius: 27,
+    backgroundColor: '#FFFFFF',
     justifyContent: 'center',
     alignItems: 'center',
+    // Added shadow and border for premium feel
+    elevation: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 5,
+    borderWidth: 2,
+    borderColor: 'rgba(255,255,255,0.5)',
   },
   teamFallbackIcon: {
     fontSize: 24,

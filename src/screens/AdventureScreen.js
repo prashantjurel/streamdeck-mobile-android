@@ -29,6 +29,7 @@ const AdventureScreen = ({navigation, route}) => {
   const [cards, setCards] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadingPrefs, setLoadingPrefs] = useState(true);
   const [prefs, setPrefs] = useState(null);
   const [page, setPage] = useState(1);
   const stackRef = useRef(null);
@@ -50,45 +51,70 @@ const AdventureScreen = ({navigation, route}) => {
 
   const checkPrefs = async () => {
     try {
-      const settingsStr = await AsyncStorage.getItem('streamdeck_settings');
-      if (settingsStr) {
-        const settings = JSON.parse(settingsStr);
-        if (settings.movieboxDomain) setMovieboxDomain(settings.movieboxDomain);
-      }
-
-      if (routeGenreIds && routeGenreIds.length > 0) {
-        setPrefs(routeGenreIds);
-        if (cards.length === 0 || isMoodBased) {
-          setCards([]);
-          setCurrentIndex(0);
-          loadContent(routeGenreIds, 1, true);
-        }
+      setLoadingPrefs(true);
+      
+      // 1. ABSOLUTE PRIORITY: Check AsyncStorage first.
+      // If the user hit 'Reset' in settings, this will be null.
+      const saved = await AsyncStorage.getItem('streamdeck_adventure_prefs');
+      
+      if (!saved) {
+        // If prefs were deleted (Reset), clear local state and redirect IMMEDIATELY
+        setCards([]);
+        setPrefs(null);
+        setCurrentIndex(0);
+        navigation.replace('AdventurePreferences');
         return;
       }
 
-      const saved = await AsyncStorage.getItem('streamdeck_adventure_prefs');
-      if (!saved) {
-        navigation.navigate('AdventurePreferences');
-      } else {
-        const parsedPrefs = JSON.parse(saved);
-        setPrefs(parsedPrefs);
-        
-        if (cards.length === 0) {
-          loadContent(parsedPrefs, 1, true);
-        }
+      // 2. Handle fresh results from a survey/mood picker
+      if (routeGenreIds && routeGenreIds.length > 0 && isMoodBased) {
+        setPrefs(routeGenreIds);
+        setCards([]);
+        setCurrentIndex(0);
+        await loadContent(routeGenreIds, 1, true);
+        navigation.setParams({ isMoodBased: false });
+        setLoadingPrefs(false);
+        return;
       }
+
+      // 3. If we have cards in memory and prefs exist, we can stay here.
+      if (cards.length > 0) {
+        setLoadingPrefs(false);
+        return;
+      }
+
+      // 4. Use the saved preferences to load content
+      const parsedPrefs = JSON.parse(saved);
+      if (parsedPrefs && Array.isArray(parsedPrefs) && parsedPrefs.length > 0) {
+        setPrefs(parsedPrefs);
+        await loadContent(parsedPrefs, 1, true);
+        setLoadingPrefs(false);
+        return;
+      }
+
+      // Fallback: Empty prefs array
+      navigation.replace('AdventurePreferences');
     } catch (e) {
-      navigation.navigate('AdventurePreferences');
+      console.error('[Adventure] Reset Sync Error:', e);
+      navigation.replace('AdventurePreferences');
+    } finally {
+      setLoadingPrefs(false);
     }
   };
 
   const loadContent = async (genreIds, pageNum, reset = false) => {
+    if (!genreIds || genreIds.length === 0) return;
+    
     setLoading(true);
     try {
-      const data = await fetchMovieRecommendations(genreIds, pageNum);
+      // Pick a random starting page on reset to ensure variety
+      const actualPage = reset ? Math.floor(Math.random() * 20) + 1 : pageNum;
+      if (reset) setPage(actualPage);
+
+      const data = await fetchMovieRecommendations(genreIds, actualPage);
       if (data && data.length > 0) {
         setCards((prev) => reset ? data : [...prev, ...data]);
-        setPage(pageNum);
+        setPage(actualPage);
       }
     } catch (e) {
       console.error('[Adventure] Load error:', e);
@@ -169,10 +195,19 @@ const AdventureScreen = ({navigation, route}) => {
     );
   };
 
-  const handleSwipeLeft = (card) => {
-    if (cards.length - currentIndex < 5) {
+  const checkLoadMore = (index) => {
+    // If we're getting close to the end of the current card pool, fetch more
+    if (cards.length - index < 8) {
       loadContent(prefs, page + 1, false);
     }
+  };
+
+  const onSwipeAction = (direction, card, newIndex) => {
+    setCurrentIndex(newIndex);
+    checkLoadMore(newIndex);
+
+    if (direction === 'right') handleSwipeRight(card);
+    else if (direction === 'up') handleSwipeUp(card);
   };
 
   return (
@@ -203,7 +238,7 @@ const AdventureScreen = ({navigation, route}) => {
       </View>
       
       <View style={styles.container}>
-        {loading && cards.length === 0 ? (
+        {(loading || loadingPrefs) && cards.length === 0 ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={Colors.accentPurple} />
             <Text style={styles.loadingText}>Curating your feed...</Text>
@@ -214,10 +249,14 @@ const AdventureScreen = ({navigation, route}) => {
               ref={stackRef}
               data={cards} 
               currentIndex={currentIndex}
-              setCurrentIndex={setCurrentIndex}
-              onSwipeLeft={handleSwipeLeft} 
-              onSwipeRight={handleSwipeRight}
-              onSwipeUp={handleSwipeUp}
+              setCurrentIndex={(val) => {
+                const nextIdx = typeof val === 'function' ? val(currentIndex) : val;
+                setCurrentIndex(nextIdx);
+                checkLoadMore(nextIdx);
+              }}
+              onSwipeLeft={() => checkLoadMore(currentIndex + 1)}
+              onSwipeRight={(card) => handleSwipeRight(card)}
+              onSwipeUp={(card) => handleSwipeUp(card)}
             />
           </View>
         )}

@@ -122,12 +122,13 @@ export default function UpdateModal() {
           style={styles.modalContainer}
         >
           <View style={styles.logoContainer}>
-            <LinearGradient
-              colors={[Colors.accentPurple, Colors.accentPink]}
-              style={styles.logoGradient}
-            >
-              <Icon name="cloud-download" size={44} color="#FFF" />
-            </LinearGradient>
+            <View style={styles.logoBox}>
+              <Image 
+                source={require('../assets/images/logo.png')} 
+                style={styles.logoImage} 
+                resizeMode="contain"
+              />
+            </View>
           </View>
           
           <Text style={styles.title}>Update Available!</Text>
@@ -225,12 +226,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  logoGradient: {
+  logoBox: {
     width: '100%',
     height: '100%',
     borderRadius: 42,
+    overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  logoImage: {
+    width: '100%',
+    height: '100%',
   },
 
   title: {

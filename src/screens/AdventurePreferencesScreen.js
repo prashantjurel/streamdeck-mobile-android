@@ -61,7 +61,7 @@ const AdventurePreferencesScreen = ({navigation}) => {
         'streamdeck_adventure_prefs',
         JSON.stringify(selectedIds),
       );
-      navigation.navigate('AdventureMain');
+      navigation.replace('AdventureMain');
     } catch (e) {}
   };
 

@@ -11,6 +11,7 @@ import {
   Alert,
   Switch,
   Linking,
+  Image,
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -26,6 +27,15 @@ import {
 } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
 import {useApi} from '../context/ApiContext';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withSequence,
+  withTiming,
+  runOnJS,
+} from 'react-native-reanimated';
+import {useFocusEffect} from '@react-navigation/native';
 
 const REGIONS = [
   { code: 'IN', name: 'India', flag: '🇮🇳' },
@@ -47,6 +57,24 @@ const SettingsScreen = ({navigation}) => {
   const [sportsPingStatus, setSportsPingStatus] = useState('idle');
   const [saved, setSaved] = useState(false);
 
+  // Auto-scroll and flash
+  const scrollRef = React.useRef(null);
+  const movieboxY = React.useRef(0);
+  const sportsY = React.useRef(0);
+  const flashOpacity = useSharedValue(0);
+
+  const flashStyle = useAnimatedStyle(() => ({
+    backgroundColor: Colors.accentPurple,
+    opacity: flashOpacity.value * 0.15,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    borderRadius: BorderRadius.lg,
+    zIndex: -1,
+  }));
+
   const { saveKey, checkKey } = useApi();
 
   // Fallback padding for devices that report 0 insets
@@ -65,6 +93,38 @@ const SettingsScreen = ({navigation}) => {
     const key = await getApiKey();
     setApiKeyState(key === '4b7f91faba006196d244250a3f87ffce' ? '' : key);
   };
+
+  useFocusEffect(
+    React.useCallback(() => {
+      const { params } = navigation.getState().routes.find(r => r.name === 'Settings') || {};
+      if (params?.highlightSection) {
+        const section = params.highlightSection;
+        setTimeout(() => {
+          if (section === 'moviebox') {
+            scrollRef.current?.scrollTo({ y: movieboxY.current - 100, animated: true });
+          } else if (section === 'sports') {
+            scrollRef.current?.scrollTo({ y: sportsY.current - 100, animated: true });
+          }
+          
+          // Flash for 3 seconds
+          flashOpacity.value = withRepeat(
+            withSequence(
+              withTiming(1, { duration: 500 }),
+              withTiming(0, { duration: 500 })
+            ),
+            3,
+            true,
+            () => {
+              flashOpacity.value = 0;
+            }
+          );
+
+          // Clear params after handling so it doesn't flash again
+          navigation.setParams({ highlightSection: null });
+        }, 500);
+      }
+    }, [navigation])
+  );
 
   useEffect(() => {
     if (!movieboxDomain) {
@@ -178,6 +238,7 @@ const SettingsScreen = ({navigation}) => {
     <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <ScrollView 
+        ref={scrollRef}
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{paddingTop: topPadding}}
       >
@@ -185,13 +246,13 @@ const SettingsScreen = ({navigation}) => {
 
         {/* Header */}
         <View style={styles.headerSection}>
-          <LinearGradient
-            colors={[Colors.accentPurple, Colors.accentPink]}
-            start={{x: 0, y: 0}}
-            end={{x: 1, y: 0}}
-            style={styles.logoBox}>
-            <Text style={styles.logoIcon}>▶</Text>
-          </LinearGradient>
+          <View style={styles.logoBox}>
+            <Image 
+              source={require('../assets/images/logo.png')} 
+              style={styles.logoImage} 
+              resizeMode="contain"
+            />
+          </View>
           <Text style={styles.appTitle}>StreamDeck</Text>
           <Text style={styles.appSubtitle}>
             Configure your streaming experience
@@ -251,9 +312,15 @@ const SettingsScreen = ({navigation}) => {
         </View>
 
         {/* Streaming Sources */}
-        <View style={styles.section}>
+        <View 
+          style={styles.section}
+          onLayout={e => movieboxY.current = e.nativeEvent.layout.y}
+        >
           <Text style={styles.sectionLabel}>STREAMING SOURCES</Text>
           <View style={styles.card}>
+            {navigation.getState().routes.find(r => r.name === 'Settings')?.params?.highlightSection === 'moviebox' && (
+              <Animated.View style={flashStyle} />
+            )}
             <Text style={styles.fieldLabel}>MovieBox Domain</Text>
             <Text style={styles.fieldHint}>
               Configure the MovieBox domain if the default is unreachable.
@@ -296,9 +363,15 @@ const SettingsScreen = ({navigation}) => {
         </View>
 
         {/* Live Sports Providers */}
-        <View style={styles.section}>
+        <View 
+          style={styles.section}
+          onLayout={e => sportsY.current = e.nativeEvent.layout.y}
+        >
           <Text style={styles.sectionLabel}>LIVE SPORTS PROVIDERS</Text>
           <View style={styles.card}>
+            {navigation.getState().routes.find(r => r.name === 'Settings')?.params?.highlightSection === 'sports' && (
+              <Animated.View style={flashStyle} />
+            )}
             {settings.liveSportsProviders.map((provider, idx) => (
               <View key={idx} style={styles.providerRow}>
                 <View style={styles.providerInfo}>
@@ -372,9 +445,28 @@ const SettingsScreen = ({navigation}) => {
             <TouchableOpacity
               style={styles.dangerBtn}
               onPress={async () => {
-                await AsyncStorage.removeItem('streamdeck_adventure_prefs');
-                await AsyncStorage.removeItem('streamdeck_adventure_recent_sources');
-                Alert.alert('Reset', 'Adventure preferences and history have been reset.');
+                Alert.alert(
+                  'Reset Discovery Vibe',
+                  'This will clear your current genres and mood history. Your saved movies in Library will stay. Continue?',
+                  [
+                    { text: 'Cancel', style: 'cancel' },
+                    { 
+                      text: 'Reset Vibe', 
+                      style: 'destructive',
+                      onPress: async () => {
+                        try {
+                          await AsyncStorage.multiRemove([
+                            'streamdeck_adventure_prefs',
+                            'streamdeck_adventure_recent_sources'
+                          ]);
+                          Alert.alert('Reset Complete', 'Your discovery vibes have been reset.');
+                        } catch (e) {
+                          Alert.alert('Error', 'Failed to clear data.');
+                        }
+                      }
+                    }
+                  ]
+                );
               }}
               activeOpacity={0.7}>
               <Text style={styles.dangerBtnText}>
@@ -438,9 +530,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: Spacing.lg,
   },
-  logoIcon: {
-    color: '#fff',
-    fontSize: 24,
+  logoImage: {
+    width: '100%',
+    height: '100%',
+    borderRadius: BorderRadius.lg,
   },
   appTitle: {
     fontSize: FontSizes.xxl,

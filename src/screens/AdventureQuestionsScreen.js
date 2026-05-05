@@ -13,44 +13,82 @@ import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 
 const {width} = Dimensions.get('window');
 
-const QUESTIONS = [
-  {
-    id: 'q1',
+const MOOD_FLOW = {
+  initial: {
+    id: 'mood',
     text: "How was your day today?",
     options: [
-      { text: "Stressful, I need to laugh and unwind", genres: [35, 16, 10751], emoji: "😅" }, // Comedy, Animation, Family
-      { text: "A bit boring, I need some excitement!", genres: [28, 12, 53], emoji: "🥱" }, // Action, Adventure, Thriller
-      { text: "Great! I'm feeling thoughtful and deep", genres: [18, 99, 36], emoji: "🤔" }, // Drama, Documentary, History
-      { text: "Just chill. Open to anything", genres: [878, 14, 10402], emoji: "😎" }, // Sci-Fi, Fantasy, Music
+      { id: 'stress', text: "Stressful, I need to laugh and unwind", emoji: "😅", next: 'light' },
+      { id: 'boring', text: "A bit boring, I need some excitement!", emoji: "🥱", next: 'action' },
+      { id: 'thought', text: "Great! I'm feeling thoughtful and deep", emoji: "🤔", next: 'deep' },
+      { id: 'chill', text: "Just chill. Open to anything", emoji: "😎", next: 'any' },
     ]
   },
-  {
-    id: 'q2',
+  light: {
+    id: 'light',
+    text: "What kind of humor are you in the mood for?",
+    options: [
+      { text: "Pure silliness and slapstick", genres: [35, 10751], emoji: "🤡" },
+      { text: "Smart, witty dialogue", genres: [35, 18], emoji: "😏" },
+      { text: "Romantic and feel-good", genres: [35, 10749], emoji: "🥂" },
+      { text: "Animation and wonder", genres: [16, 14], emoji: "✨" },
+    ]
+  },
+  action: {
+    id: 'action',
+    text: "Where should the adrenaline take you?",
+    options: [
+      { text: "A high-stakes heist or crime", genres: [80, 53], emoji: "💰" },
+      { text: "Saving the world from chaos", genres: [28, 12], emoji: "💥" },
+      { text: "Deep space or the future", genres: [878, 12], emoji: "🚀" },
+      { text: "A gritty, realistic survival", genres: [53, 12], emoji: "🏔️" },
+    ]
+  },
+  deep: {
+    id: 'deep',
+    text: "What kind of story do you want to ponder?",
+    options: [
+      { text: "A powerful human drama", genres: [18], emoji: "🎭" },
+      { text: "A fascinating true story", genres: [99, 36], emoji: "📜" },
+      { text: "A dark mystery or puzzle", genres: [9648, 80], emoji: "🔍" },
+      { text: "Something artistic and indie", genres: [18, 99], emoji: "🎨" },
+    ]
+  },
+  any: {
+    id: 'any',
     text: "If you could escape right now, where would you go?",
     options: [
-      { text: "A far-off galaxy or the future", genres: [878], emoji: "🚀" }, // Sci-Fi
-      { text: "A spooky, abandoned mansion", genres: [27, 53], emoji: "👻" }, // Horror, Thriller
-      { text: "A magical realm with wizards", genres: [14], emoji: "🧙" }, // Fantasy
-      { text: "Solving a gritty city crime", genres: [80, 9648], emoji: "🕵️" }, // Crime, Mystery
-      { text: "A romantic getaway", genres: [10749], emoji: "💖" }, // Romance
+      { text: "A far-off galaxy", genres: [878], emoji: "🌌" },
+      { text: "A magical realm", genres: [14], emoji: "🧙" },
+      { text: "A spooky thriller", genres: [27, 53], emoji: "👻" },
+      { text: "A relaxing romantic trip", genres: [10749], emoji: "💖" },
     ]
   }
-];
+};
 
 const AdventureQuestionsScreen = ({navigation}) => {
-  const [currentQIndex, setCurrentQIndex] = useState(0);
+  const [currentStep, setCurrentStep] = useState('initial');
   const [collectedGenres, setCollectedGenres] = useState([]);
 
-  const handleOptionPress = (genres) => {
-    const newGenres = [...collectedGenres, ...genres];
+  const handleOptionPress = (opt) => {
+    const nextStep = opt.next;
+    const newGenres = opt.genres ? [...collectedGenres, ...opt.genres] : collectedGenres;
     
-    if (currentQIndex < QUESTIONS.length - 1) {
+    if (nextStep) {
       setCollectedGenres(newGenres);
-      setCurrentQIndex(currentQIndex + 1);
+      setCurrentStep(nextStep);
     } else {
       // Finished questions
       // Deduplicate genres
       const uniqueGenres = [...new Set(newGenres)];
+      
+      // PERSIST: Save these as the current adventure prefs so the tab remembers
+      try {
+        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+        AsyncStorage.setItem('streamdeck_adventure_prefs', JSON.stringify(uniqueGenres));
+      } catch (e) {
+        console.error('[Adventure] Failed to persist mood prefs:', e);
+      }
       
       navigation.navigate('AdventureMain', { 
         genreIds: uniqueGenres,
@@ -59,16 +97,18 @@ const AdventureQuestionsScreen = ({navigation}) => {
     }
   };
 
-  const currentQ = QUESTIONS[currentQIndex];
+  const currentQ = MOOD_FLOW[currentStep];
+  const stepCount = 2; // Fixed 2-step survey
+  const progress = currentStep === 'initial' ? 1 : 2;
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="light-content" backgroundColor={Colors.bgPrimary} />
       
       <View style={styles.progressContainer}>
-        <Text style={styles.progressText}>Question {currentQIndex + 1} of {QUESTIONS.length}</Text>
+        <Text style={styles.progressText}>Step {progress} of {stepCount}</Text>
         <View style={styles.progressBarBg}>
-          <View style={[styles.progressBarFill, { width: `${((currentQIndex + 1) / QUESTIONS.length) * 100}%` }]} />
+          <View style={[styles.progressBarFill, { width: `${(progress / stepCount) * 100}%` }]} />
         </View>
       </View>
 
@@ -81,7 +121,7 @@ const AdventureQuestionsScreen = ({navigation}) => {
               key={index} 
               style={styles.optionCard}
               activeOpacity={0.8}
-              onPress={() => handleOptionPress(opt.genres)}
+              onPress={() => handleOptionPress(opt)}
             >
               <Text style={styles.optionEmoji}>{opt.emoji}</Text>
               <Text style={styles.optionText}>{opt.text}</Text>

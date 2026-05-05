@@ -35,12 +35,15 @@ export const fetchMovieRecommendations = async (genreIds = [], page = 1) => {
     const response = await fetch(url);
     const data = await response.json();
     
-    return data.results.map(movie => ({
+    const results = data.results.map(movie => ({
       ...movie,
       media_type: 'movie',
       thumb: movie.poster_path ? `https://image.tmdb.org/t/p/w500${movie.poster_path}` : null,
       backdrop: movie.backdrop_path ? `https://image.tmdb.org/t/p/w500${movie.backdrop_path}` : null,
-    })).filter(m => m.thumb); // Only return movies with posters
+    })).filter(m => m.thumb);
+
+    // Shuffle the results for local variety
+    return results.sort(() => Math.random() - 0.5);
   } catch (err) {
     console.error('[Adventure] Failed to fetch movie recommendations:', err);
     return [];

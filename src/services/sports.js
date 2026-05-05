@@ -316,6 +316,7 @@ export async function fetchF1Data() {
   return allSessions;
 }
 
+
 export async function fetchLiveSportsData() {
   try {
     const [cricket, football, f1] = await Promise.all([

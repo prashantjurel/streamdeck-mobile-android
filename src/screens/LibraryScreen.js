@@ -21,8 +21,8 @@ import {getImageUrl} from '../services/tmdb';
 import SectionHeader from '../components/SectionHeader';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
-const CARD_WIDTH = (SCREEN_WIDTH - Spacing.xl * 2 - Spacing.md) / 2;
-const CARD_HEIGHT = CARD_WIDTH * 1.5;
+const GRID_CARD_WIDTH = (SCREEN_WIDTH - Spacing.xl * 2 - Spacing.md * 2) / 3;
+const GRID_CARD_HEIGHT = GRID_CARD_WIDTH * 1.5;
 
 const LibraryScreen = ({navigation}) => {
   const insets = useSafeAreaInsets();
@@ -84,72 +84,82 @@ const LibraryScreen = ({navigation}) => {
     }
   };
 
-  const renderMovieItem = (movie) => {
+  const renderMovieItem = (movie, index) => {
     const posterUrl = getImageUrl(movie.poster_path);
     const title = movie.title || movie.name || 'Unknown';
-    const rating = movie.vote_average ? movie.vote_average.toFixed(1) : null;
+    const isLastInRow = (index + 1) % 3 === 0;
 
     return (
-      <TouchableOpacity
-        key={movie.id}
-        style={styles.card}
-        onPress={() => handlePress(movie)}
-        activeOpacity={0.7}>
-        {posterUrl ? (
-          <Image source={{uri: posterUrl}} style={styles.poster} resizeMode="cover" />
-        ) : (
-          <View style={[styles.poster, styles.placeholder]}>
-            <Text style={{fontSize: 32}}>🎬</Text>
-          </View>
-        )}
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.9)']}
-          style={styles.overlay}>
-          <Text style={styles.title} numberOfLines={2}>
-            {title}
-          </Text>
-          {rating && (
-            <View style={styles.ratingRow}>
-              <Text style={styles.star}>★</Text>
-              <Text style={styles.ratingText}>{rating}</Text>
+      <View
+        key={movie.id ? `movie-${movie.id}` : `movie-idx-${index}`}
+        style={[styles.cardWrapper, { marginRight: isLastInRow ? 0 : Spacing.md }]}>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => handlePress(movie)}
+          activeOpacity={0.7}>
+          {posterUrl ? (
+            <Image source={{uri: posterUrl}} style={styles.poster} resizeMode="cover" />
+          ) : (
+            <View style={[styles.poster, styles.placeholder]}>
+              <Text style={{fontSize: 24}}>🎬</Text>
             </View>
           )}
-        </LinearGradient>
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.95)']}
+            style={styles.overlay}>
+            <Text style={[styles.title, { fontSize: FontSizes.sm - 2 }]} numberOfLines={2}>
+              {title}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.removeBtn}
           onPress={() => handleRemove(movie)}
           activeOpacity={0.7}>
-          <Text style={styles.removeIcon}>✕</Text>
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            start={{x: 0, y: 0}}
+            end={{x: 1, y: 1}}
+            style={styles.removeBtnGradient}>
+            <Text style={styles.removeIcon}>✕</Text>
+          </LinearGradient>
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
     );
   };
 
-  const renderAdventureItem = (adv) => {
+  const renderAdventureItem = (adv, index) => {
+    const isLastInRow = (index + 1) % 3 === 0;
     return (
-      <TouchableOpacity
-        key={adv.url}
-        style={styles.card}
-        onPress={() => handleAdventurePress(adv)}
-        activeOpacity={0.7}>
-        <Image source={{uri: adv.thumb}} style={styles.poster} resizeMode="cover" />
-        <LinearGradient
-          colors={['transparent', 'rgba(0,0,0,0.9)']}
-          style={styles.overlay}>
-          <Text style={styles.title} numberOfLines={2}>
-            {adv.title}
-          </Text>
-          <View style={styles.advMeta}>
-            <Text style={styles.advSource}>{adv.category}</Text>
-          </View>
-        </LinearGradient>
+      <View
+        key={adv.url ? `adv-${adv.url}` : `adv-idx-${index}`}
+        style={[styles.cardWrapper, { marginRight: isLastInRow ? 0 : Spacing.md }]}>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={() => handleAdventurePress(adv)}
+          activeOpacity={0.7}>
+          <Image source={{uri: adv.thumb}} style={styles.poster} resizeMode="cover" />
+          <LinearGradient
+            colors={['transparent', 'rgba(0,0,0,0.95)']}
+            style={styles.overlay}>
+            <Text style={[styles.title, { fontSize: FontSizes.sm - 2 }]} numberOfLines={2}>
+              {adv.title}
+            </Text>
+          </LinearGradient>
+        </TouchableOpacity>
         <TouchableOpacity
           style={styles.removeBtn}
           onPress={() => handleRemoveAdventure(adv)}
           activeOpacity={0.7}>
-          <Text style={styles.removeIcon}>✕</Text>
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            start={{x: 0, y: 0}}
+            end={{x: 1, y: 1}}
+            style={styles.removeBtnGradient}>
+            <Text style={styles.removeIcon}>✕</Text>
+          </LinearGradient>
         </TouchableOpacity>
-      </TouchableOpacity>
+      </View>
     );
   };
 
@@ -158,7 +168,7 @@ const LibraryScreen = ({navigation}) => {
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       <View style={[styles.header, {paddingTop: topPadding + Spacing.md}]}>
-        <SectionHeader title="My Library" subtitle={`${watchlist.length} saved items`} />
+        <SectionHeader title="My Library" />
       </View>
 
       {(watchlist.length === 0 && adventures.length === 0) ? (
@@ -225,16 +235,18 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    justifyContent: 'flex-start',
   },
-  row: {
-    justifyContent: 'space-between',
-    marginBottom: Spacing.md,
+  cardWrapper: {
+    width: GRID_CARD_WIDTH,
+    height: GRID_CARD_HEIGHT,
+    marginBottom: Spacing.xl,
+    position: 'relative',
   },
   card: {
-    width: CARD_WIDTH,
-    height: CARD_HEIGHT,
-    borderRadius: BorderRadius.lg,
+    width: '100%',
+    height: '100%',
+    borderRadius: BorderRadius.md,
     overflow: 'hidden',
     backgroundColor: Colors.bgCard,
     borderWidth: 1,
@@ -276,21 +288,30 @@ const styles = StyleSheet.create({
   },
   removeBtn: {
     position: 'absolute',
-    top: Spacing.sm,
-    right: Spacing.sm,
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    top: -6,
+    right: -6,
+    width: 24,
+    height: 24,
+    zIndex: 10,
+    elevation: 5,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 3,
+  },
+  removeBtnGradient: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 12,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.2)',
+    borderColor: 'rgba(255,255,255,0.3)',
   },
   removeIcon: {
-    color: '#ff6b6b',
-    fontSize: 12,
-    fontWeight: '700',
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '900',
   },
   emptyState: {
     flex: 1,

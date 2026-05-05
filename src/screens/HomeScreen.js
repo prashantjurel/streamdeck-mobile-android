@@ -1,6 +1,6 @@
 // StreamDeck Mobile — Home Screen
-import React, {useState, useEffect, useCallback} from 'react';
-import {useFocusEffect} from '@react-navigation/native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   ScrollView,
@@ -18,19 +18,119 @@ import {
   Image,
   Animated as RNAnimated,
 } from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {Colors, Spacing} from '../theme/colors';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import LinearGradient from 'react-native-linear-gradient';
+import Animated, { 
+  useSharedValue, 
+  useAnimatedStyle, 
+  withRepeat, 
+  withTiming, 
+  withSequence,
+  Easing,
+  interpolate,
+  Extrapolation
+} from 'react-native-reanimated';
+import { Colors, Spacing } from '../theme/colors';
 import HeroSpotlight from '../components/HeroSpotlight';
 import ContinueWatchingRow from '../components/ContinueWatchingRow';
 import TrendingRow from '../components/TrendingRow';
-import {fetchTrendingContent, fetchWatchProviders, getImageUrl} from '../services/tmdb';
-import {loadContinueWatching, loadSettings, toggleWatchlistItem} from '../utils/storage';
+import { fetchTrendingContent, fetchWatchProviders, getImageUrl } from '../services/tmdb';
+import { loadContinueWatching, loadSettings, toggleWatchlistItem } from '../utils/storage';
 import UpdateModal from '../components/UpdateModal';
-import {fetchLiveSportsData} from '../services/sports';
-import {useApi} from '../context/ApiContext';
-import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
+import { fetchLiveSportsData } from '../services/sports';
+import { useApi } from '../context/ApiContext';
+import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
 
-const HomeScreen = ({navigation}) => {
+const AnimatedSplash = () => {
+  const scale = useSharedValue(0.9);
+  const opacity = useSharedValue(0.6);
+  const shimmer = useSharedValue(0);
+
+  useEffect(() => {
+    scale.value = withRepeat(
+      withSequence(
+        withTiming(1.1, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.9, { duration: 1500, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+    opacity.value = withRepeat(
+      withSequence(
+        withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.6, { duration: 1500, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+    shimmer.value = withRepeat(
+      withTiming(1, { duration: 2000, easing: Easing.linear }),
+      -1,
+      false
+    );
+  }, []);
+
+  const logoStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value }],
+    opacity: opacity.value,
+  }));
+
+  const glowStyle = useAnimatedStyle(() => ({
+    transform: [{ scale: scale.value * 1.3 }],
+    opacity: interpolate(scale.value, [0.9, 1.1], [0.1, 0.4], Extrapolation.CLAMP),
+  }));
+
+  const shimmerStyle = useAnimatedStyle(() => ({
+    opacity: interpolate(
+      Math.sin(shimmer.value * Math.PI),
+      [-1, 1],
+      [0.3, 1]
+    ),
+  }));
+
+  return (
+    <View style={styles.loadingScreen}>
+      <StatusBar barStyle="light-content" backgroundColor={Colors.bgPrimary} />
+      
+      <View style={styles.splashContainer}>
+        {/* Outer Glow */}
+        <Animated.View style={[styles.splashGlow, glowStyle]}>
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            style={StyleSheet.absoluteFill}
+          />
+        </Animated.View>
+
+        {/* Logo Card */}
+        <Animated.View style={[styles.splashLogoBox, logoStyle]}>
+          <Image 
+            source={require('../assets/images/logo.png')} 
+            style={styles.splashLogo} 
+            resizeMode="contain"
+          />
+        </Animated.View>
+
+        <Animated.View style={[styles.shimmerContainer, shimmerStyle]}>
+          <Text style={styles.splashTitle}>STREAMDECK</Text>
+          <View style={styles.loadingLineContainer}>
+            <View style={styles.loadingLineBase} />
+            <Animated.View style={styles.loadingLineProgress}>
+              <LinearGradient
+                colors={[Colors.accentPurple, Colors.accentPink]}
+                start={{x: 0, y: 0}}
+                end={{x: 1, y: 0}}
+                style={StyleSheet.absoluteFill}
+              />
+            </Animated.View>
+          </View>
+          <Text style={styles.splashSubtitle}>Initializing Discovery Engine...</Text>
+        </Animated.View>
+      </View>
+    </View>
+  );
+};
+
+const HomeScreen = ({ navigation }) => {
   const insets = useSafeAreaInsets();
   const [globalTrending, setGlobalTrending] = useState([]);
   const [localTrending, setLocalTrending] = useState([]);
@@ -69,7 +169,7 @@ const HomeScreen = ({navigation}) => {
       const region = settings.contentRegion || 'IN';
       setCustomProviders(settings.liveSportsProviders || []);
       setMovieboxDomain(settings.movieboxDomain || 'moviebox.mov');
-      
+
       const REGION_NAMES = {
         IN: 'India',
         US: 'the US',
@@ -80,7 +180,7 @@ const HomeScreen = ({navigation}) => {
       setRegionName(REGION_NAMES[region] || region);
 
       // Load trending content
-      const {global, local, netflix, prime} = await fetchTrendingContent(region);
+      const { global, local, netflix, prime } = await fetchTrendingContent(region);
       setGlobalTrending(global);
       setLocalTrending(local);
       setNetflixTrending(netflix);
@@ -92,24 +192,26 @@ const HomeScreen = ({navigation}) => {
         const preferredLeagues = [
           'ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'
         ];
-        
+
         const livePreferredMatches = matches.filter(m => {
           if (m.status !== 'LIVE') return false;
           const lowerTitle = m.title.toLowerCase();
           return preferredLeagues.some(league => lowerTitle.includes(league));
         });
-        
+
         heroSports = livePreferredMatches.map(match => {
           const lowerTitle = match.title.toLowerCase();
           let backdrop = null;
-          
+
           // Use high-quality stadium backgrounds based on sport type
-          if (lowerTitle.includes('ipl') || lowerTitle.includes('india') || match.type === 'cricket') {
+          if (match.backdrop) {
+            backdrop = match.backdrop;
+          } else if (lowerTitle.includes('ipl') || lowerTitle.includes('india') || match.type === 'cricket') {
             backdrop = 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=600&auto=format&fit=crop';
           } else if (match.type === 'football' || lowerTitle.includes('league') || lowerTitle.includes('liga') || lowerTitle.includes('serie')) {
             backdrop = 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=600&auto=format&fit=crop';
           } else if (match.type === 'f1' || lowerTitle.includes('f1') || lowerTitle.includes('formula')) {
-            backdrop = 'https://upload.wikimedia.org/wikipedia/commons/thumb/0/0d/FIA_F1_Austria_2025_Nr._1_Verstappen.jpg/1280px-FIA_F1_Austria_2025_Nr._1_Verstappen.jpg';
+            backdrop = 'https://images.pexels.com/photos/36920232/pexels-photo-36920232.jpeg?auto=compress&cs=tinysrgb&w=1200';
           }
 
           return {
@@ -146,8 +248,6 @@ const HomeScreen = ({navigation}) => {
       loadData();
     }
   }, [loadData, hasKey]);
-
-  // Removed early return from here
 
   // Refresh continue watching when screen is focused
   useEffect(() => {
@@ -214,7 +314,7 @@ const HomeScreen = ({navigation}) => {
       // Sports: show sports provider picker
       const qName = movie.match.quickAccessName || (movie.match.type === 'football' ? 'Football' : 'IPL Live');
       setSelectedQuickItem({ name: movie.match.title || qName });
-      
+
       const nativeProviders = PROVIDER_CONFIG[qName] || [];
       const formattedCustomProviders = customProviders.map((p, idx) => {
         const appearance = getCustomProviderAppearance(p.name, p.url);
@@ -274,7 +374,7 @@ const HomeScreen = ({navigation}) => {
     } catch (e) {
       console.error('[Home] Failed to fetch providers:', e);
       // Fallback to Explore screen
-      navigation.navigate('Explore', {searchQuery: title, ts: Date.now()});
+      navigation.navigate('Explore', { searchQuery: title, ts: Date.now() });
     }
   };
 
@@ -309,46 +409,40 @@ const HomeScreen = ({navigation}) => {
   };
 
   const MEDIA_TYPES = [
-    {id: 'all', name: 'All', icon: '🔥'},
-    {id: 'live', name: 'Live', icon: '🔴'},
-    {id: 'movies_series', name: 'Movies / Series', icon: '🎬'},
+    { id: 'all', name: 'All', icon: '🔥' },
+    { id: 'live', name: 'Live', icon: '🔴' },
+    { id: 'movies_series', name: 'Movies / Series', icon: '🎬' },
   ];
 
   if (!hasKey) {
     return (
-      <View style={[styles.screen, {paddingTop: topPadding, justifyContent: 'center', alignItems: 'center'}]}>
-        <Text style={{color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20}}>
+      <View style={[styles.screen, { paddingTop: topPadding, justifyContent: 'center', alignItems: 'center' }]}>
+        <Text style={{ color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20 }}>
           Please add your TMDB API Key to access movies and TV shows.
         </Text>
-        <TouchableOpacity 
-          style={{marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8}}
+        <TouchableOpacity
+          style={{ marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8 }}
           onPress={requestKey}
         >
-          <Text style={{color: '#fff', fontWeight: 'bold'}}>Add API Key</Text>
+          <Text style={{ color: '#fff', fontWeight: 'bold' }}>Add API Key</Text>
         </TouchableOpacity>
       </View>
     );
   }
 
   if (loading) {
-    return (
-      <View style={styles.loadingScreen}>
-        <StatusBar barStyle="light-content" backgroundColor={Colors.bgPrimary} />
-        <ActivityIndicator size="large" color={Colors.accentPurple} />
-        <Text style={styles.loadingText}>Loading StreamDeck...</Text>
-      </View>
-    );
+    return <AnimatedSplash />;
   }
 
   // Hero items now come from state (sports + trending)
 
   return (
-    <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
+    <View style={[styles.screen, { paddingBottom: insets.bottom || 80 }]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       <UpdateModal />
       <ScrollView
         style={styles.scrollView}
-        contentContainerStyle={{paddingTop: topPadding + 20}}
+        contentContainerStyle={{ paddingTop: topPadding + 20 }}
         showsVerticalScrollIndicator={false}
         refreshControl={
           <RefreshControl
@@ -441,39 +535,39 @@ const HomeScreen = ({navigation}) => {
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
           <View style={styles.modalContent}>
-             <View style={styles.modalHeader}>
-                <View style={styles.modalHandle} />
-                <Text style={styles.modalTitle}>Available On</Text>
-                <Text style={styles.modalSubtitle}>Select where to stream {selectedQuickItem?.name}</Text>
-             </View>
-             
-             <View style={styles.providerGrid}>
-                {availableProviders.map(provider => (
-                  <TouchableOpacity 
-                    key={provider.id} 
-                    style={styles.providerItem}
-                    onPress={() => handleSelectProvider(provider)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
-                      {provider.logoUrl ? (
-                        <Image
-                          source={{uri: provider.logoUrl}}
-                          style={styles.providerLogo}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Text style={styles.providerIconText}>{provider.icon}</Text>
-                      )}
-                    </View>
-                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                  </TouchableOpacity>
-                ))}
-             </View>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Available On</Text>
+              <Text style={styles.modalSubtitle}>Select where to stream {selectedQuickItem?.name}</Text>
+            </View>
 
-             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
-                <Text style={styles.closeModalText}>Cancel</Text>
-             </TouchableOpacity>
+            <View style={styles.providerGrid}>
+              {availableProviders.map(provider => (
+                <TouchableOpacity
+                  key={provider.id}
+                  style={styles.providerItem}
+                  onPress={() => handleSelectProvider(provider)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
+                    {provider.logoUrl ? (
+                      <Image
+                        source={{ uri: provider.logoUrl }}
+                        style={styles.providerLogo}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Text style={styles.providerIconText}>{provider.icon}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
+              <Text style={styles.closeModalText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -494,12 +588,77 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgPrimary,
     justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.lg,
   },
-  loadingText: {
+  splashContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  splashGlow: {
+    position: 'absolute',
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    opacity: 0.3,
+    blurRadius: 40,
+  },
+  splashLogoBox: {
+    width: 100,
+    height: 100,
+    borderRadius: 24,
+    backgroundColor: Colors.bgSecondary,
+    padding: 10,
+    elevation: 20,
+    shadowColor: Colors.accentPurple,
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    marginBottom: 40,
+  },
+  splashLogo: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 16,
+  },
+  shimmerContainer: {
+    alignItems: 'center',
+  },
+  splashTitle: {
+    fontSize: 28,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: 6,
+    textTransform: 'uppercase',
+    marginBottom: 20,
+    textShadowColor: 'rgba(157, 78, 221, 0.5)',
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 10,
+  },
+  splashSubtitle: {
+    fontSize: 12,
     color: Colors.textMuted,
-    fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '700',
+    letterSpacing: 1,
+    textTransform: 'uppercase',
+  },
+  loadingLineContainer: {
+    width: 200,
+    height: 3,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 2,
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  loadingLineBase: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  loadingLineProgress: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '40%', // Decorative progress
+    borderRadius: 2,
   },
   bottomPadding: {
     height: 100,
@@ -560,7 +719,7 @@ const styles = StyleSheet.create({
     // Subtle upward shadow for depth
     elevation: 24,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: -8},
+    shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.4,
     shadowRadius: 20,
   },

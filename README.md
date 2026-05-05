@@ -1,7 +1,7 @@
 # StreamDeck Mobile 📱
 
 <div align="center">
-  <img src="https://via.placeholder.com/150x150.png?text=StreamDeck+Logo" alt="StreamDeck Logo" width="150" />
+  <img src="src/assets/images/logo.png" alt="StreamDeck Logo" width="150" />
   <p><strong>Your Ultimate Mobile Entertainment Hub</strong></p>
 </div>
 

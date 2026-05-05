@@ -1,4 +1,4 @@
-import React, {useCallback, useImperativeHandle, forwardRef, useEffect} from 'react';
+import React, {useCallback, useImperativeHandle, forwardRef, useEffect, useRef} from 'react';
 import {StyleSheet, View, Dimensions} from 'react-native';
 import {Gesture, GestureDetector} from 'react-native-gesture-handler';
 import Animated, {
@@ -35,19 +35,16 @@ const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) 
 
   useImperativeHandle(ref, () => ({
     swipeLeft: () => {
-      if (!isTopCard) return;
       translateX.value = withTiming(-width * 1.5, { duration: 400 }, () => {
         runOnJS(handleSwipeComplete)('left');
       });
     },
     swipeRight: () => {
-      if (!isTopCard) return;
       translateX.value = withTiming(width * 1.5, { duration: 400 }, () => {
         runOnJS(handleSwipeComplete)('right');
       });
     },
     swipeUp: () => {
-      if (!isTopCard) return;
       translateY.value = withTiming(-CARD_HEIGHT * 2, { duration: 400 }, () => {
         runOnJS(handleSwipeComplete)('up');
       });
@@ -141,13 +138,19 @@ const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) 
 
 const AdventureStack = forwardRef(({data, currentIndex, setCurrentIndex, onSwipeLeft, onSwipeRight, onSwipeUp}, ref) => {
   
-  // We need a ref to the top card to trigger programmatic swipes
-  let topCardRef = null;
+  // Use a ref to store the current top card instance
+  const topCardRef = useRef(null);
 
   useImperativeHandle(ref, () => ({
-    swipeLeft: () => topCardRef?.swipeLeft(),
-    swipeRight: () => topCardRef?.swipeRight(),
-    swipeUp: () => topCardRef?.swipeUp(),
+    swipeLeft: () => {
+      if (topCardRef.current) topCardRef.current.swipeLeft();
+    },
+    swipeRight: () => {
+      if (topCardRef.current) topCardRef.current.swipeRight();
+    },
+    swipeUp: () => {
+      if (topCardRef.current) topCardRef.current.swipeUp();
+    },
   }));
 
   const onSwiped = (direction, item) => {
@@ -160,25 +163,26 @@ const AdventureStack = forwardRef(({data, currentIndex, setCurrentIndex, onSwipe
   if (currentIndex >= data.length) return null;
 
   // Render a fixed window of 3 cards to keep memory low.
-  // We reverse it so the active card (index 0 in the slice) is rendered last and physically sits on top of the DOM.
   const visibleCards = data.slice(currentIndex, currentIndex + 3).reverse();
 
   return (
     <View style={styles.container}>
       {visibleCards.map((item, mapIndex) => {
-        // Because the array is reversed (e.g. [Card 3, Card 2, Card 1])
-        // The active card is ALWAYS the LAST item in the array.
         const isTopCard = mapIndex === visibleCards.length - 1;
         const isNextCard = mapIndex === visibleCards.length - 2;
 
         return (
           <SwipeableCard
-            key={item.id || item.url || item.title || Math.random().toString()}
+            key={item.id ? `card-${item.id}` : `card-idx-${currentIndex + (visibleCards.length - 1 - mapIndex)}`}
             item={item}
             isTopCard={isTopCard}
             isNextCard={isNextCard}
             onSwiped={onSwiped}
-            ref={(r) => { if (isTopCard) topCardRef = r; }}
+            ref={(r) => { 
+              if (isTopCard && r) {
+                topCardRef.current = r; 
+              }
+            }}
           />
         );
       })}
