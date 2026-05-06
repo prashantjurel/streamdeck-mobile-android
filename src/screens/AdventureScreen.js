@@ -21,11 +21,13 @@ import AdventureStack from '../components/AdventureStack';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
+import {useApi} from '../context/ApiContext';
 
 const SAVED_ADVENTURES_KEY = 'streamdeck_mobile_adventure_saved';
 
 const AdventureScreen = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
+  const { hasKey, requestKey } = useApi();
   const [cards, setCards] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -45,8 +47,10 @@ const AdventureScreen = ({navigation, route}) => {
 
   useFocusEffect(
     useCallback(() => {
-      checkPrefs();
-    }, [routeGenreIds])
+      if (hasKey) {
+        checkPrefs();
+      }
+    }, [routeGenreIds, hasKey])
   );
 
   const checkPrefs = async () => {
@@ -117,6 +121,7 @@ const AdventureScreen = ({navigation, route}) => {
         setPage(actualPage);
       }
     } catch (e) {
+      if (e.message === 'INVALID_API_KEY') invalidateKey();
       console.error('[Adventure] Load error:', e);
     } finally {
       setLoading(false);
@@ -209,6 +214,35 @@ const AdventureScreen = ({navigation, route}) => {
     if (direction === 'right') handleSwipeRight(card);
     else if (direction === 'up') handleSwipeUp(card);
   };
+
+  const topPadding = insets.top || StatusBar.currentHeight || 0;
+
+  if (!hasKey) {
+    return (
+      <View style={[styles.screen, { paddingTop: topPadding, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }]}>
+        <Text style={{ fontSize: 40, marginBottom: 16 }}>🔑</Text>
+        <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+          One-Time Setup Required
+        </Text>
+        <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+          Adventure uses TMDB to discover and recommend movies based on your taste. This is a one-time setup, once saved, you won't be asked again.
+        </Text>
+        <TouchableOpacity
+          style={{ borderRadius: 12, overflow: 'hidden' }}
+          onPress={requestKey}
+        >
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ paddingVertical: 14, paddingHorizontal: 28 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' }}>Set Up API Key</Text>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
+    );
+  }
 
   return (
     <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>

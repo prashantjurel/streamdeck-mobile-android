@@ -41,10 +41,16 @@ export const ApiProvider = ({ children }) => {
     setModalVisible(false);
   };
 
+  const invalidateKey = async () => {
+    await storageSaveApiKey('');
+    setHasKey(false);
+    setModalVisible(true);
+  };
+
   if (isInitializing) return null;
 
   return (
-    <ApiContext.Provider value={{ hasKey, requestKey, skipKey, saveKey, checkKey }}>
+    <ApiContext.Provider value={{ hasKey, requestKey, skipKey, saveKey, checkKey, invalidateKey }}>
       {children}
       {isModalVisible && (
         <ApiKeySetupModal

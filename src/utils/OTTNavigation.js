@@ -5,17 +5,17 @@ import {Linking} from 'react-native';
  * Mapping TMDB provider IDs to internal IDs, names, search URLs and App Deep Link Schemes.
  */
 export const OTT_PROVIDER_MAP = {
-  8:   { id: 'netflix',   name: 'Netflix',      searchUrl: 'https://www.netflix.com/search?q=',         appScheme: 'nflx://www.netflix.com/search?q=' },
-  119: { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: 'primevideo://search?phrase=' },
-  9:   { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: 'primevideo://search?phrase=' }, 
-  122: { id: 'hotstar',   name: 'JioHotstar',    searchUrl: 'https://www.hotstar.com/in/explore?search_query=', appScheme: 'hotstar://search?q=' },
-  232: { id: 'jio',       name: 'JioCinema',     searchUrl: 'https://www.jiocinema.com/search/',          appScheme: 'jiocinema://' },
-  3:   { id: 'google',    name: 'Google TV',     searchUrl: 'https://play.google.com/store/search?q=',    appScheme: 'market://search?q=' },
-  2:   { id: 'apple',     name: 'Apple TV',      searchUrl: 'https://tv.apple.com/in/search?term=',       appScheme: 'videos://' },
-  220: { id: 'zee5',      name: 'Zee5',          searchUrl: 'https://www.zee5.com/search?q=',             appScheme: 'zee5://search?q=' },
-  237: { id: 'sonyliv',   name: 'SonyLIV',       searchUrl: 'https://www.sonyliv.com/search?q=',          appScheme: 'sonyliv://search?q=' },
-  121: { id: 'mxplayer',  name: 'MX Player',     searchUrl: 'https://www.mxplayer.in/search?q=',          appScheme: 'mxplayer://' },
-  'youtube': { id: 'youtube', name: 'YouTube',  searchUrl: 'https://www.youtube.com/results?search_query=', appScheme: 'youtube://results?search_query=' }
+  8:   { id: 'netflix',   name: 'Netflix',      searchUrl: 'https://www.netflix.com/search?q=',         appScheme: 'nflx://www.netflix.com/search?q=', icon: 'N', color: '#E50914' },
+  119: { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: ['primevideo://search?phrase=', 'amazonvideo://watch/'], icon: 'P', color: '#00A8E1' },
+  9:   { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: ['primevideo://search?phrase=', 'amazonvideo://watch/'], icon: 'P', color: '#00A8E1' }, 
+  122: { id: 'hotstar',   name: 'JioHotstar',    searchUrl: 'https://www.hotstar.com/in/explore?search_query=', appScheme: 'hotstar://search?q=', icon: 'H', color: '#001E3C' },
+  220: { id: 'jio',       name: 'JioCinema',     searchUrl: 'https://www.jiocinema.com/search/',          appScheme: 'jiocinema://', icon: 'JC', color: '#D9008D' },
+  3:   { id: 'google',    name: 'Google TV',     searchUrl: 'https://play.google.com/store/search?q=',    appScheme: 'market://search?q=', icon: 'G', color: '#EA4335' },
+  2:   { id: 'apple',     name: 'Apple TV',      searchUrl: 'https://tv.apple.com/in/search?term=',       appScheme: 'videos://', icon: '', color: '#000000' },
+  232: { id: 'zee5',      name: 'Zee5',          searchUrl: 'https://www.zee5.com/search?q=',             appScheme: 'zee5://search?q=', icon: 'Z5', color: '#821B6F' },
+  237: { id: 'sonyliv',   name: 'SonyLIV',       searchUrl: 'https://www.sonyliv.com/search?q=',          appScheme: 'sonyliv://search?q=', icon: 'SL', color: '#2e2e6e' },
+  121: { id: 'voot',      name: 'Voot',          searchUrl: 'https://www.voot.com/search?q=',             appScheme: 'voot://', icon: 'V', color: '#6A1B9A' },
+  'youtube': { id: 'youtube', name: 'YouTube',  searchUrl: 'https://www.youtube.com/results?search_query=', appScheme: 'youtube://results?search_query=', icon: 'Y', color: '#FF0000' }
 };
 
 /**
@@ -30,15 +30,19 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
   // 1. Try Native App Deep Link first
   if (provider.appScheme) {
     try {
-      // For some apps we append the query, for others just the base scheme
-      const schemeUrl = provider.appScheme.includes('?') || provider.appScheme.includes('/') 
-        ? `${provider.appScheme}${query}` 
-        : provider.appScheme;
-        
-      const canOpen = await Linking.canOpenURL(schemeUrl);
-      if (canOpen) {
-        await Linking.openURL(schemeUrl);
-        return true; // Successfully opened in-app
+      const schemes = Array.isArray(provider.appScheme) ? provider.appScheme : [provider.appScheme];
+      
+      for (const scheme of schemes) {
+        // For some apps we append the query, for others just the base scheme
+        const schemeUrl = scheme.includes('?') || scheme.includes('/') 
+          ? `${scheme}${query}` 
+          : scheme;
+          
+        const canOpen = await Linking.canOpenURL(schemeUrl);
+        if (canOpen) {
+          await Linking.openURL(schemeUrl);
+          return true; // Successfully opened in-app
+        }
       }
     } catch (e) {
       console.warn(`[OTTNav] Failed to open app scheme for ${provider.name}:`, e);
@@ -50,10 +54,28 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
   if (provider.searchUrl) {
     finalUrl = `${provider.searchUrl}${query}`;
     
-    // Special Logic for Cineby/MovieBox (Direct TMDB ID links)
-    if (provider.id === 'moviebox' && movieboxDomain && movieboxDomain.toLowerCase().includes('cineby.sc') && tmdbId && mediaType) {
-      const domain = movieboxDomain.replace('http://', '').replace('https://', '');
-      finalUrl = `https://${domain}/${mediaType}/${tmdbId}`;
+    // Smart Resolution for MovieBox-compatible sites
+    if (provider.id === 'moviebox' && movieboxDomain && tmdbId && mediaType) {
+      const domain = movieboxDomain.replace('http://', '').replace('https://', '').toLowerCase().trim();
+      const knownDirectDomains = ['cineby', 'bitcine', 'moviebox', 'rivestream', 'sflix', 'vidsrc', 'embed', '2embed'];
+      const isKnownDirect = knownDirectDomains.some(d => domain.includes(d));
+
+      if (isKnownDirect) {
+        if (domain.includes('rivestream')) {
+          finalUrl = `https://${domain}/watch?type=${mediaType}&id=${tmdbId}`;
+        } else {
+          finalUrl = `https://${domain}/${mediaType}/${tmdbId}`;
+        }
+      } else {
+        // Return unverified status so the component can show a themed modal
+        const domainOnly = domain.split('/')[0];
+        return {
+          status: 'unverified',
+          domain: domainOnly,
+          homepageUrl: `https://${domainOnly}`,
+          movieTitle: movieTitle
+        };
+      }
     }
   } else if (provider.url) {
     finalUrl = provider.url.trim();

@@ -15,6 +15,7 @@ import Animated, {
   useSharedValue,
   useAnimatedStyle,
   withTiming,
+  withSpring,
   withRepeat,
   withSequence,
   interpolate,
@@ -232,47 +233,48 @@ const HeroCard = memo(({ movie, onPlay, onAddToList }) => {
 
 // ═══════════════════════════════════════════════════════════
 // StackedCard — RIGHT-side-peeking animated card in the stack
-//
-// HOW RIGHT-PEEK WORKS (Android-safe):
-//   - All cards share the SAME left edge (left: 16)
-//   - Front card is narrower (SCREEN_WIDTH - 40)
-//   - Behind cards are WIDER (SCREEN_WIDTH - 28, SCREEN_WIDTH - 18)
-//   - The wider behind cards extend further to the RIGHT
-//   - z-index keeps the front card on top
 // ═══════════════════════════════════════════════════════════
-const StackedCard = memo(({ movie, index, animIndex, onPlay, onAddToList, screenWidth }) => {
+const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList, screenWidth }) => {
   const animStyle = useAnimatedStyle(() => {
-    const dist = index - animIndex.value;
+    // ── Circular Distance Calculation ──
+    // This ensures that even if animIndex is 10 and we have 5 movies,
+    // the distance for movie 0 is handled correctly as if it's right after 4.
+    let dist = index - (animIndex.value % total);
+    if (dist > total / 2) dist -= total;
+    if (dist < -total / 2) dist += total;
 
-    // Cards that have scrolled past → hide
-    if (dist < -0.5) {
-      return { opacity: 0, zIndex: -1, width: screenWidth - 64 };
+    // Cards too far in the past/future relative to active
+    if (dist < -1.1 || dist > 2.5) {
+      return { opacity: 0, zIndex: -1, transform: [{ translateX: dist < 0 ? -screenWidth : 0 }] };
     }
-    // Cards too far in the future → hide
-    if (dist > 2.5) {
-      return { opacity: 0, zIndex: -1, width: screenWidth - 64 };
-    }
 
-    const d = Math.max(0, Math.min(dist, 2));
+    const d = Math.max(-1, Math.min(dist, 2));
 
-    // ── RIGHT-PEEK: all cards same left edge, behind cards wider ──
-    // Front: W-64  →  Card2: W-52 (12px right peek)  →  Card3: W-42 (22px right peek)
+    // ── Horizontal Movement (Exit) ──
+    const translateX = interpolate(
+      d, [-1, 0, 1, 2],
+      [-screenWidth * 0.8, 0, 0, 0],
+      Extrapolation.CLAMP
+    );
+
+    // ── RIGHT-PEEK: behind cards wider ──
     const cardWidth = interpolate(
       d, [0, 1, 2],
       [screenWidth - 64, screenWidth - 52, screenWidth - 42],
       Extrapolation.CLAMP,
     );
 
-    // Opacity: front card full, behind cards progressively faded
-    const opacity = interpolate(d, [0, 1, 2], [1, 0.45, 0.20], Extrapolation.CLAMP);
-
-    // z-index: front on top
+    const opacity = interpolate(d, [-0.5, 0, 1, 2], [0, 1, 0.45, 0.20], Extrapolation.CLAMP);
     const zIdx = interpolate(d, [0, 1, 2], [3, 2, 1], Extrapolation.CLAMP);
 
     return {
       width: cardWidth,
       opacity,
       zIndex: Math.round(zIdx),
+      transform: [
+        { translateX },
+        { scale: interpolate(d, [-1, 0, 1, 2], [0.9, 1, 1, 1], Extrapolation.CLAMP) }
+      ],
     };
   });
 
@@ -295,36 +297,37 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => 
   const animIndex = useSharedValue(0);
   const timerRef = useRef(null);
 
-  // Keep moviesRef in sync for PanResponder
   useEffect(() => {
     moviesRef.current = movies;
   }, [movies]);
 
-  const goTo = useCallback((idx) => {
-    const clamped = Math.max(0, Math.min(idx, moviesRef.current.length - 1));
-    activeRef.current = clamped;
-    setActiveIndex(clamped);
-    animIndex.value = withTiming(clamped, {
-      duration: ANIM_DURATION,
-      easing: Easing.out(Easing.cubic),
+  const goTo = useCallback((idx, velocity = 0) => {
+    // Infinite indexing: we don't clamp, we just go to the target
+    activeRef.current = idx;
+    
+    // Calculate UI index for dots
+    const len = moviesRef.current.length;
+    if (len > 0) {
+      const uiIdx = ((idx % len) + len) % len;
+      setActiveIndex(uiIdx);
+    }
+
+    animIndex.value = withSpring(idx, {
+      damping: 20,
+      stiffness: 90,
+      mass: 0.5,
+      velocity: velocity,
     });
-  }, [movies.length, animIndex]);
+  }, [animIndex]);
 
   // ── Auto-play ────────────────────────────────────────
   const startAuto = useCallback(() => {
     clearInterval(timerRef.current);
     if (movies.length <= 1) return;
     timerRef.current = setInterval(() => {
-      const next = activeRef.current + 1 >= movies.length ? 0 : activeRef.current + 1;
-      if (next === 0) {
-        activeRef.current = 0;
-        setActiveIndex(0);
-        animIndex.value = 0;
-      } else {
-        goTo(next);
-      }
+      goTo(activeRef.current + 1);
     }, AUTO_PLAY_MS);
-  }, [movies.length, goTo, animIndex]);
+  }, [movies.length, goTo]);
 
   useEffect(() => {
     startAuto();
@@ -337,37 +340,37 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => 
     setActiveIndex(0);
     animIndex.value = 0;
     startAuto();
-  }, [movies.length, startAuto]);
-
-  // ── Pause/resume when modal is open ──────────────────
-  useEffect(() => {
-    if (paused) {
-      clearInterval(timerRef.current);
-    } else {
-      startAuto();
-    }
-  }, [paused, startAuto]);
+  }, [movies.length]);
 
   // ── Swipe gesture ────────────────────────────────────
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_, g) =>
-        Math.abs(g.dx) > 15 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5,
+        Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
       onPanResponderGrant: () => {
         clearInterval(timerRef.current);
       },
+      onPanResponderMove: (_, g) => {
+        const delta = (g.dx / SCREEN_WIDTH);
+        animIndex.value = activeRef.current - delta;
+      },
       onPanResponderRelease: (_, g) => {
         const currentMovies = moviesRef.current;
-        if (g.dx < -50) {
-          // Wrap around to 0 if at end, else go next
-          const nextIdx = activeRef.current + 1 >= currentMovies.length ? 0 : activeRef.current + 1;
-          goTo(nextIdx);
-        } else if (g.dx > 50) {
-          // Wrap around to end if at start, else go prev
-          const prevIdx = activeRef.current - 1 < 0 ? currentMovies.length - 1 : activeRef.current - 1;
-          goTo(prevIdx);
+        const velocity = g.vx;
+        const dragThreshold = SCREEN_WIDTH * 0.2;
+        
+        let targetIdx = activeRef.current;
+
+        if (g.dx < -dragThreshold || velocity < -0.5) {
+          targetIdx = activeRef.current + 1;
+        } else if (g.dx > dragThreshold || velocity > 0.5) {
+          targetIdx = activeRef.current - 1;
         }
+
+        // Circular behavior: no clamping needed here, 
+        // goTo handles infinite indexing
+        goTo(targetIdx, velocity);
         startAuto();
       },
     }),
@@ -384,6 +387,7 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => 
             key={`${movie.id}-${idx}`}
             movie={movie}
             index={idx}
+            total={movies.length}
             animIndex={animIndex}
             onPlay={onPlay}
             onAddToList={onAddToList}
@@ -456,9 +460,9 @@ const styles = StyleSheet.create({
   // ── Bottom gradient — rich cinematic scrim ──────────
   gradient: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
+    left: -1,
+    right: -1,
+    bottom: -1,
     height: '55%',
   },
 

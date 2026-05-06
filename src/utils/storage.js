@@ -154,11 +154,10 @@ export async function saveSettings(settings) {
 export function getDefaultSettings() {
   return {
     tmdbApiKey: '',
-    movieboxDomain: 'moviebox.mov',
-    contentRegion: 'IN', // Default region
+    movieboxDomain: 'cineby.sc',
+    contentRegion: 'US', // Global default
     liveSportsProviders: [
       { name: 'SportsLiveToday', url: 'https://sportslivetoday.com' },
-      { name: 'Braflix', url: 'https://braflix.top' },
     ],
   };
 }
@@ -176,6 +175,7 @@ export async function getApiKey() {
 }
 
 export async function saveApiKey(key) {
+  if (key === undefined || key === null) return;
   try {
     await AsyncStorage.setItem(KEYS.TMDB_API_KEY, key);
   } catch (e) {

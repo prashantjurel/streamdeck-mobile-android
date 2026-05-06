@@ -11,13 +11,16 @@ import {
   Dimensions,
   ScrollView,
   Linking,
+  Modal,
+  ActivityIndicator,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
-import {loadWatchlist, toggleWatchlistItem} from '../utils/storage';
-import {getImageUrl} from '../services/tmdb';
+import {loadWatchlist, toggleWatchlistItem, getDefaultSettings} from '../utils/storage';
+import {getImageUrl, fetchWatchProviders} from '../services/tmdb';
+import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
 import SectionHeader from '../components/SectionHeader';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
@@ -28,6 +31,11 @@ const LibraryScreen = ({navigation}) => {
   const insets = useSafeAreaInsets();
   const [watchlist, setWatchlist] = useState([]);
   const [adventures, setAdventures] = useState([]);
+  const [showPicker, setShowPicker] = useState(false);
+  const [availableProviders, setAvailableProviders] = useState([]);
+  const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [selectedMovie, setSelectedMovie] = useState(null);
+  const [movieboxDomain, setMovieboxDomain] = useState('cineby.sc');
   const [loading, setLoading] = useState(true);
 
   // Fallback padding for devices that report 0 insets
@@ -37,12 +45,16 @@ const LibraryScreen = ({navigation}) => {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [wlItems, advItemsRaw] = await Promise.all([
+      const [wlItems, advItemsRaw, settings] = await Promise.all([
         loadWatchlist(),
-        AsyncStorage.getItem('streamdeck_mobile_adventure_saved')
+        AsyncStorage.getItem('streamdeck_mobile_adventure_saved'),
+        getDefaultSettings()
       ]);
       setWatchlist(wlItems || []);
       setAdventures(advItemsRaw ? JSON.parse(advItemsRaw) : []);
+      if (settings?.movieboxDomain) {
+        setMovieboxDomain(settings.movieboxDomain);
+      }
     } catch (e) {
       console.error('[Library] Load error:', e);
     } finally {
@@ -60,7 +72,7 @@ const LibraryScreen = ({navigation}) => {
   }, [navigation, loadData]);
 
   const handleRemoveAdventure = async adv => {
-    const updated = adventures.filter(a => a.url !== adv.url);
+    const updated = adventures.filter(a => a.id !== adv.id);
     setAdventures(updated);
     await AsyncStorage.setItem('streamdeck_mobile_adventure_saved', JSON.stringify(updated));
   };
@@ -70,18 +82,79 @@ const LibraryScreen = ({navigation}) => {
     setWatchlist(updated);
   };
 
-  const handlePress = movie => {
-    const title = movie.title || movie.name;
-    navigation.navigate('Explore', {searchQuery: title, ts: Date.now()});
+  const handlePress = async movie => {
+    setSelectedMovie(movie);
+    setCheckingAvailability(true);
+    setShowPicker(true);
+    setAvailableProviders([]);
+
+    try {
+      const mediaType = movie.media_type || (movie.title ? 'movie' : 'tv');
+      const watchInfo = await fetchWatchProviders(movie.id, mediaType);
+
+      const found = [];
+      if (watchInfo) {
+        const allProviders = [
+          ...(watchInfo.flatrate || []),
+          ...(watchInfo.buy || []),
+          ...(watchInfo.rent || [])
+        ];
+        const uniqueIds = [...new Set(allProviders.map(p => p.provider_id))];
+        uniqueIds.forEach(id => {
+          if (OTT_PROVIDER_MAP[id]) {
+            const tmdbProvider = allProviders.find(p => p.provider_id === id);
+            found.push({
+              ...OTT_PROVIDER_MAP[id],
+              logoUrl: tmdbProvider?.logo_path ? `https://image.tmdb.org/t/p/w200${tmdbProvider.logo_path}` : null,
+              icon: '📺',
+              color: '#333'
+            });
+          }
+        });
+      }
+
+      if (!found.find(p => p.id === 'moviebox')) {
+        const domain = movieboxDomain.replace('http://', '').replace('https://', '');
+        found.push({
+          id: 'moviebox',
+          name: 'MovieBox',
+          color: '#E21D48',
+          icon: '🍿',
+          logoUrl: null,
+          searchUrl: `https://${domain}/search?q=`
+        });
+      }
+      if (!found.find(p => p.id === 'youtube')) {
+        found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
+      }
+
+      setAvailableProviders(found);
+    } catch (e) {
+      console.error('[Library] Availability check failed:', e);
+    } finally {
+      setCheckingAvailability(false);
+    }
+  };
+
+  const handleSelectProvider = async provider => {
+    const title = selectedMovie.title || selectedMovie.name;
+    const mediaType = selectedMovie.media_type || (selectedMovie.title ? 'movie' : 'tv');
+    const tmdbId = selectedMovie.id;
+
+    setShowPicker(false);
+
+    await navigateToOTT(
+      provider,
+      title,
+      tmdbId,
+      mediaType,
+      movieboxDomain,
+      navigation
+    );
   };
 
   const handleAdventurePress = async adv => {
-    const canOpen = await Linking.canOpenURL(adv.url);
-    if (canOpen) {
-      await Linking.openURL(adv.url);
-    } else {
-      navigation.navigate('WebView', {url: adv.url, title: adv.title});
-    }
+    handlePress(adv);
   };
 
   const renderMovieItem = (movie, index) => {
@@ -132,7 +205,7 @@ const LibraryScreen = ({navigation}) => {
     const isLastInRow = (index + 1) % 3 === 0;
     return (
       <View
-        key={adv.url ? `adv-${adv.url}` : `adv-idx-${index}`}
+        key={adv.id ? `adv-${adv.id}` : `adv-idx-${index}`}
         style={[styles.cardWrapper, { marginRight: isLastInRow ? 0 : Spacing.md }]}>
         <TouchableOpacity
           style={styles.card}
@@ -204,6 +277,62 @@ const LibraryScreen = ({navigation}) => {
           <View style={{height: 120}} />
         </ScrollView>
       )}
+
+      {/* Smart Provider Selection Modal */}
+      <Modal
+        visible={showPicker}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPicker(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Available On</Text>
+              <Text style={styles.modalSubtitle}>Streaming now in India</Text>
+            </View>
+
+            <View style={styles.providerGrid}>
+              {!checkingAvailability && availableProviders.map(provider => (
+                <TouchableOpacity
+                  key={provider.id}
+                  style={styles.providerItem}
+                  onPress={() => handleSelectProvider(provider)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
+                    {provider.logoUrl ? (
+                      <Image
+                        source={{ uri: provider.logoUrl }}
+                        style={styles.providerLogo}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Text style={styles.providerIconText}>{provider.icon}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                </TouchableOpacity>
+              ))}
+              {!checkingAvailability && availableProviders.length === 1 && availableProviders[0].id === 'youtube' && (
+                <View style={styles.noProvidersBox}>
+                  <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing YouTube and MovieBox as fallbacks.</Text>
+                </View>
+              )}
+            </View>
+
+            {checkingAvailability ? (
+              <ActivityIndicator size="large" color={Colors.accentPink} style={styles.modalSpinner} />
+            ) : (
+              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowPicker(false)}>
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };
@@ -348,6 +477,108 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontWeight: '800',
     textTransform: 'uppercase',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'flex-end',
+  },
+  modalDismissZone: {
+    flex: 1,
+  },
+  modalContent: {
+    backgroundColor: Colors.bgSecondary,
+    borderTopLeftRadius: BorderRadius.xl,
+    borderTopRightRadius: BorderRadius.xl,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.md,
+    paddingBottom: Spacing.xxl,
+    minHeight: 350,
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  modalHandle: {
+    width: 40,
+    height: 4,
+    backgroundColor: Colors.borderSubtle,
+    borderRadius: 2,
+    marginBottom: Spacing.lg,
+  },
+  modalTitle: {
+    color: Colors.textPrimary,
+    fontSize: FontSizes.xl,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  modalSubtitle: {
+    color: Colors.textMuted,
+    fontSize: FontSizes.sm,
+  },
+  providerGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: Spacing.xl,
+    marginBottom: Spacing.xl,
+  },
+  providerItem: {
+    alignItems: 'center',
+    width: 80,
+  },
+  providerIconBox: {
+    width: 64,
+    height: 64,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: Spacing.sm,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  providerLogo: {
+    width: '100%',
+    height: '100%',
+  },
+  providerIconText: {
+    fontSize: 32,
+    color: '#fff',
+    fontWeight: '900',
+  },
+  providerName: {
+    color: Colors.textSecondary,
+    fontSize: FontSizes.xs,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  modalCancelBtn: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingVertical: Spacing.md,
+    borderRadius: BorderRadius.lg,
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: Colors.textSecondary,
+    fontSize: FontSizes.md,
+    fontWeight: '600',
+  },
+  modalSpinner: {
+    marginVertical: Spacing.xxl,
+  },
+  noProvidersBox: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    padding: Spacing.lg,
+    borderRadius: BorderRadius.md,
+    width: '100%',
+    alignItems: 'center',
+  },
+  noProvidersText: {
+    color: Colors.textMuted,
+    textAlign: 'center',
+    lineHeight: 20,
+    fontSize: FontSizes.sm,
   },
 });
 

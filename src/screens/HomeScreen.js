@@ -20,11 +20,11 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
-import Animated, { 
-  useSharedValue, 
-  useAnimatedStyle, 
-  withRepeat, 
-  withTiming, 
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
   withSequence,
   Easing,
   interpolate,
@@ -41,92 +41,107 @@ import { fetchLiveSportsData } from '../services/sports';
 import { useApi } from '../context/ApiContext';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
 
-const AnimatedSplash = () => {
-  const scale = useSharedValue(0.9);
-  const opacity = useSharedValue(0.6);
-  const shimmer = useSharedValue(0);
+const HomeSkeleton = ({ visible }) => {
+  const insets = useSafeAreaInsets();
+  const topPadding = insets.top || StatusBar.currentHeight || 0;
+  const opacity = useSharedValue(1);
+  const shimmer = useSharedValue(-1);
+  const pulse = useSharedValue(0.4);
 
   useEffect(() => {
-    scale.value = withRepeat(
-      withSequence(
-        withTiming(1.1, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
-        withTiming(0.9, { duration: 1500, easing: Easing.inOut(Easing.ease) })
-      ),
-      -1,
-      true
-    );
-    opacity.value = withRepeat(
-      withSequence(
-        withTiming(1, { duration: 1500, easing: Easing.inOut(Easing.ease) }),
-        withTiming(0.6, { duration: 1500, easing: Easing.inOut(Easing.ease) })
-      ),
-      -1,
-      true
-    );
+    opacity.value = withTiming(visible ? 1 : 0, { duration: 600 });
+
     shimmer.value = withRepeat(
-      withTiming(1, { duration: 2000, easing: Easing.linear }),
+      withTiming(1, { duration: 2000, easing: Easing.bezier(0.4, 0, 0.2, 1) }),
       -1,
       false
     );
-  }, []);
+    pulse.value = withRepeat(
+      withSequence(
+        withTiming(0.7, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.4, { duration: 1000, easing: Easing.inOut(Easing.ease) })
+      ),
+      -1,
+      true
+    );
+  }, [visible]);
 
-  const logoStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value }],
+  const animatedStyle = useAnimatedStyle(() => ({
     opacity: opacity.value,
   }));
 
-  const glowStyle = useAnimatedStyle(() => ({
-    transform: [{ scale: scale.value * 1.3 }],
-    opacity: interpolate(scale.value, [0.9, 1.1], [0.1, 0.4], Extrapolation.CLAMP),
+  const itemAnimatedStyle = useAnimatedStyle(() => ({
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    opacity: pulse.value,
+    overflow: 'hidden',
   }));
 
   const shimmerStyle = useAnimatedStyle(() => ({
-    opacity: interpolate(
-      Math.sin(shimmer.value * Math.PI),
-      [-1, 1],
-      [0.3, 1]
-    ),
+    transform: [{ translateX: interpolate(shimmer.value, [-1, 1], [-500, 500]) }],
   }));
 
+  const RenderSkeletonItem = ({ style }) => (
+    <Animated.View style={[style, itemAnimatedStyle]}>
+      <Animated.View style={[StyleSheet.absoluteFill, shimmerStyle]}>
+        <LinearGradient
+          colors={['transparent', 'rgba(255,255,255,0.08)', 'transparent']}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={StyleSheet.absoluteFill}
+        />
+      </Animated.View>
+    </Animated.View>
+  );
+
   return (
-    <View style={styles.loadingScreen}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.bgPrimary} />
-      
-      <View style={styles.splashContainer}>
-        {/* Outer Glow */}
-        <Animated.View style={[styles.splashGlow, glowStyle]}>
-          <LinearGradient
-            colors={[Colors.accentPurple, Colors.accentPink]}
-            style={StyleSheet.absoluteFill}
-          />
-        </Animated.View>
+    <Animated.View
+      pointerEvents={visible ? 'auto' : 'none'}
+      style={[StyleSheet.absoluteFill, styles.skeletonScreen, animatedStyle, { zIndex: 999 }]}
+    >
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      <ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingTop: topPadding + 10, paddingBottom: 100 }}
+        style={{ width: '100%' }}
+      >
+        {/* Header Skeleton */}
+        <View style={styles.skeletonHeader}>
+          <RenderSkeletonItem style={styles.skeletonSearch} />
+          <RenderSkeletonItem style={styles.skeletonAvatar} />
+        </View>
 
-        {/* Logo Card */}
-        <Animated.View style={[styles.splashLogoBox, logoStyle]}>
-          <Image 
-            source={require('../assets/images/logo.png')} 
-            style={styles.splashLogo} 
-            resizeMode="contain"
-          />
-        </Animated.View>
+        {/* Category Chips Skeleton */}
+        <View style={styles.skeletonCategoryRow}>
+          {[1, 2, 3, 4].map(i => (
+            <RenderSkeletonItem key={i} style={styles.skeletonChip} />
+          ))}
+        </View>
 
-        <Animated.View style={[styles.shimmerContainer, shimmerStyle]}>
-          <Text style={styles.splashTitle}>STREAMDECK</Text>
-          <View style={styles.loadingLineContainer}>
-            <View style={styles.loadingLineBase} />
-            <Animated.View style={styles.loadingLineProgress}>
-              <LinearGradient
-                colors={[Colors.accentPurple, Colors.accentPink]}
-                start={{x: 0, y: 0}}
-                end={{x: 1, y: 0}}
-                style={StyleSheet.absoluteFill}
-              />
-            </Animated.View>
+        {/* Hero Spotlight Skeleton */}
+        <View style={styles.skeletonHeroContainer}>
+          <RenderSkeletonItem style={styles.skeletonHero} />
+          <View style={styles.skeletonHeroMeta}>
+            <RenderSkeletonItem style={styles.skeletonTextLineLong} />
+            <RenderSkeletonItem style={styles.skeletonTextLineShort} />
           </View>
-          <Text style={styles.splashSubtitle}>Initializing Discovery Engine...</Text>
-        </Animated.View>
-      </View>
-    </View>
+        </View>
+
+        {/* Rows Skeleton */}
+        {[1, 2].map(row => (
+          <View key={row} style={styles.skeletonRowContainer}>
+            <RenderSkeletonItem style={styles.skeletonRowTitle} />
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+              {[1, 2, 3].map(i => (
+                <View key={i} style={styles.skeletonCardContainer}>
+                  <RenderSkeletonItem style={styles.skeletonCard} />
+                  <RenderSkeletonItem style={styles.skeletonCardText} />
+                </View>
+              ))}
+            </ScrollView>
+          </View>
+        ))}
+      </ScrollView>
+    </Animated.View>
   );
 };
 
@@ -139,16 +154,17 @@ const HomeScreen = ({ navigation }) => {
   const [regionName, setRegionName] = useState('India');
   const [continueWatching, setContinueWatching] = useState([]);
   const [heroItems, setHeroItems] = useState([]);
+  const { hasKey, requestKey, invalidateKey } = useApi();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [showRedirectWarning, setShowRedirectWarning] = useState(false);
+  const [redirectInfo, setRedirectInfo] = useState(null);
   const [selectedQuickItem, setSelectedQuickItem] = useState(null);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [customProviders, setCustomProviders] = useState([]);
   const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
   const [selectedMediaType, setSelectedMediaType] = useState('all'); // 'all', 'movie', 'tv'
-
-  const { hasKey, requestKey } = useApi();
 
   useFocusEffect(
     useCallback(() => {
@@ -235,13 +251,18 @@ const HomeScreen = ({ navigation }) => {
       // Load continue watching
       const cwItems = await loadContinueWatching();
       setContinueWatching(cwItems);
-    } catch (e) {
-      console.error('[Home] Failed to load data:', e);
+    } catch (error) {
+      if (error.message === 'INVALID_API_KEY') {
+        // Force the app back to the lock screen and clear the invalid key
+        invalidateKey();
+      } else {
+        console.error('Failed to load home data', error);
+      }
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
-  }, []);
+  }, [hasKey]);
 
   useEffect(() => {
     if (hasKey) {
@@ -249,14 +270,13 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [loadData, hasKey]);
 
-  // Refresh continue watching when screen is focused
+  // Refresh all data (including domain settings) when screen is focused
   useEffect(() => {
-    const unsubscribe = navigation.addListener('focus', async () => {
-      const cwItems = await loadContinueWatching();
-      setContinueWatching(cwItems);
+    const unsubscribe = navigation.addListener('focus', () => {
+      loadData();
     });
     return unsubscribe;
-  }, [navigation]);
+  }, [navigation, loadData]);
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -384,7 +404,7 @@ const HomeScreen = ({ navigation }) => {
     const mediaType = selectedQuickItem?.mediaType;
     const tmdbId = selectedQuickItem?.tmdbId;
 
-    await navigateToOTT(
+    const result = await navigateToOTT(
       provider,
       title,
       tmdbId,
@@ -392,6 +412,24 @@ const HomeScreen = ({ navigation }) => {
       movieboxDomain,
       navigation
     );
+
+    if (result && result.status === 'unverified') {
+      setRedirectInfo({ ...result, provider });
+      setShowRedirectWarning(true);
+    }
+  };
+
+  const handleConfirmRedirect = () => {
+    setShowRedirectWarning(false);
+    if (redirectInfo) {
+      navigation.navigate('WebView', {
+        url: redirectInfo.homepageUrl,
+        title: redirectInfo.domain,
+        appId: redirectInfo.provider.id,
+        color: redirectInfo.provider.color || '#333',
+        type: 'moviebox',
+      });
+    }
   };
 
   const handleContinueWatchingPress = item => {
@@ -416,22 +454,29 @@ const HomeScreen = ({ navigation }) => {
 
   if (!hasKey) {
     return (
-      <View style={[styles.screen, { paddingTop: topPadding, justifyContent: 'center', alignItems: 'center' }]}>
-        <Text style={{ color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20 }}>
-          Please add your TMDB API Key to access movies and TV shows.
+      <View style={[styles.screen, { paddingTop: topPadding, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }]}>
+        <Text style={{ fontSize: 40, marginBottom: 16 }}>🔑</Text>
+        <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+          One-Time Setup Required
+        </Text>
+        <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+          StreamDeck needs a free TMDB API key to load movie posters, trending content, and search results. This is a one-time setup, once saved, you won't be asked again.
         </Text>
         <TouchableOpacity
-          style={{ marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8 }}
+          style={{ borderRadius: 12, overflow: 'hidden' }}
           onPress={requestKey}
         >
-          <Text style={{ color: '#fff', fontWeight: 'bold' }}>Add API Key</Text>
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ paddingVertical: 14, paddingHorizontal: 28 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' }}>Set Up API Key</Text>
+          </LinearGradient>
         </TouchableOpacity>
       </View>
     );
-  }
-
-  if (loading) {
-    return <AnimatedSplash />;
   }
 
   // Hero items now come from state (sports + trending)
@@ -571,6 +616,58 @@ const HomeScreen = ({ navigation }) => {
           </View>
         </View>
       </Modal>
+
+      {/* Themed Redirect Warning Modal */}
+      <Modal
+        visible={showRedirectWarning}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowRedirectWarning(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowRedirectWarning(false)} activeOpacity={1} />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <View style={styles.warningIconBox}>
+                <Text style={styles.warningIcon}>🗺️</Text>
+              </View>
+              <Text style={styles.modalTitle}>Source Not Verified</Text>
+              <Text style={styles.modalSubtitle}>We don't have a direct path for this source yet.</Text>
+            </View>
+
+            <View style={styles.warningCard}>
+              <Text style={styles.warningText}>
+                We'll take you to the homepage of <Text style={styles.highlightText}>{redirectInfo?.domain}</Text>.
+              </Text>
+              <View style={styles.stepContainer}>
+                <Text style={styles.stepNumber}>1</Text>
+                <Text style={styles.stepText}>Tap 'Continue' to open the site.</Text>
+              </View>
+              <View style={styles.stepContainer}>
+                <Text style={styles.stepNumber}>2</Text>
+                <Text style={styles.stepText}>Use their search bar for: <Text style={styles.highlightText}>"{redirectInfo?.movieTitle}"</Text></Text>
+              </View>
+            </View>
+
+            <View style={styles.modalActionRow}>
+              <TouchableOpacity style={[styles.modalBtn, styles.cancelBtn]} onPress={() => setShowRedirectWarning(false)} activeOpacity={0.7}>
+                <Text style={styles.cancelBtnText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.modalBtn, styles.confirmBtn]} onPress={handleConfirmRedirect} activeOpacity={0.7}>
+                <LinearGradient
+                  colors={[Colors.accentPurple, Colors.accentPink]}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.btnGradient}
+                >
+                  <Text style={styles.confirmBtnText}>Continue to Site</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+      <HomeSkeleton visible={loading} />
     </View>
   );
 };
@@ -588,6 +685,86 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgPrimary,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  skeletonScreen: {
+    flex: 1,
+    backgroundColor: Colors.bgPrimary,
+  },
+  skeletonHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    gap: 12,
+  },
+  skeletonSearch: {
+    flex: 1,
+    height: 44,
+    borderRadius: 12,
+  },
+  skeletonAvatar: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+  },
+  skeletonCategoryRow: {
+    flexDirection: 'row',
+    paddingHorizontal: 20,
+    marginBottom: 25,
+    gap: 10,
+  },
+  skeletonChip: {
+    width: 90,
+    height: 36,
+    borderRadius: 18,
+  },
+  skeletonHeroContainer: {
+    marginBottom: 40,
+    alignItems: 'center',
+  },
+  skeletonHero: {
+    width: '90%',
+    height: 480,
+    borderRadius: 30,
+    marginBottom: 20,
+  },
+  skeletonHeroMeta: {
+    width: '90%',
+    gap: 8,
+  },
+  skeletonTextLineLong: {
+    width: '70%',
+    height: 18,
+    borderRadius: 9,
+  },
+  skeletonTextLineShort: {
+    width: '40%',
+    height: 18,
+    borderRadius: 9,
+  },
+  skeletonRowContainer: {
+    marginBottom: 40,
+  },
+  skeletonRowTitle: {
+    width: 180,
+    height: 24,
+    borderRadius: 12,
+    marginLeft: 20,
+    marginBottom: 20,
+  },
+  skeletonCardContainer: {
+    marginRight: 18,
+    gap: 10,
+  },
+  skeletonCard: {
+    width: 150,
+    height: 220,
+    borderRadius: 16,
+  },
+  skeletonCardText: {
+    width: 100,
+    height: 14,
+    borderRadius: 7,
   },
   splashContainer: {
     alignItems: 'center',
@@ -797,6 +974,94 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '700',
     color: 'rgba(255,255,255,0.35)',
+  },
+  // ── Redirect Warning Modal ─────────────────────────
+  warningIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: 'rgba(157, 78, 221, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  warningIcon: {
+    fontSize: 32,
+  },
+  warningCard: {
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 20,
+    padding: 20,
+    marginBottom: 24,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  warningText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 15,
+    lineHeight: 22,
+    marginBottom: 16,
+  },
+  highlightText: {
+    color: '#D4A5FF',
+    fontWeight: '800',
+  },
+  stepContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+    gap: 12,
+  },
+  stepNumber: {
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: Colors.accentPurple,
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+    lineHeight: 24,
+  },
+  stepText: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  modalActionRow: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  modalBtn: {
+    flex: 1,
+    height: 54,
+    borderRadius: 16,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  cancelBtn: {
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  cancelBtnText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  confirmBtn: {
+    // Gradient handled by LinearGradient child
+  },
+  btnGradient: {
+    flex: 1,
+    width: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  confirmBtnText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
   },
 });
 

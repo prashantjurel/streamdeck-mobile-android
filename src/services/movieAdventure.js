@@ -33,6 +33,8 @@ export const fetchMovieRecommendations = async (genreIds = [], page = 1) => {
     }
 
     const response = await fetch(url);
+    if (response.status === 401) throw new Error('INVALID_API_KEY');
+
     const data = await response.json();
     
     const results = data.results.map(movie => ({
@@ -45,6 +47,7 @@ export const fetchMovieRecommendations = async (genreIds = [], page = 1) => {
     // Shuffle the results for local variety
     return results.sort(() => Math.random() - 0.5);
   } catch (err) {
+    if (err.message === 'INVALID_API_KEY') throw err;
     console.error('[Adventure] Failed to fetch movie recommendations:', err);
     return [];
   }

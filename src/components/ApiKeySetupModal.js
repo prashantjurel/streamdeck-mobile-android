@@ -16,14 +16,33 @@ import { getApiKey, saveApiKey } from '../utils/storage';
 
 const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
   const [apiKey, setApiKey] = useState('');
+  const [isValidating, setIsValidating] = useState(false);
+  const [errorMsg, setErrorMsg] = useState('');
 
   const handleSave = async () => {
-    if (!apiKey.trim()) return;
+    const key = apiKey.trim();
+    if (!key) return;
+
+    setIsValidating(true);
+    setErrorMsg('');
+
+    try {
+      const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${key}`);
+      if (res.status === 401) {
+        setErrorMsg('Invalid API Key. Please check and try again.');
+        setIsValidating(false);
+        return;
+      }
+    } catch (e) {
+      setErrorMsg('Network error. Unable to verify key.');
+      setIsValidating(false);
+      return;
+    }
 
     // Save the key
-    await saveApiKey(apiKey.trim());
+    await saveApiKey(key);
     if (onKeySaved) {
-      onKeySaved();
+      onKeySaved(key);
     }
   };
 
@@ -46,33 +65,62 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
             <Text style={styles.closeButtonText}>✕</Text>
           </TouchableOpacity>
 
-          <Text style={styles.title}>Welcome to StreamDeck</Text>
-          <Text style={styles.subtitle}>
-            To fetch movies and TV shows, you need to provide your own TMDB API Key.
-            Without a key, you can only use Adventure, Live TV, and Settings.
+          <Text style={styles.title}>Welcome to StreamDeck 🎬</Text>
+          <View style={styles.subtitleContainer}>
+            <Text style={styles.subtitleParagraph}>
+              StreamDeck uses TMDB (The Movie Database) to power all movie posters, trending lists, and search results.
+            </Text>
+            <Text style={styles.subtitleParagraph}>
+              To get started, you need a free TMDB API key. It takes less than 2 minutes and you only have to do this once.
+            </Text>
+            <Text style={styles.subtitleParagraph}>
+              Without a key, you can still use Live TV and Settings.
+            </Text>
+          </View>
+
+          <Text style={styles.quickTip}>
+            <Text style={{ fontWeight: 'bold' }}>Quick Tip:</Text> When filling the TMDB API form, select "Developer" and simply type "Personal Use" or "N/A" for all the required fields (like App Name, URL, and Description) to skip the hassle!
           </Text>
 
-          <View style={styles.inputContainer}>
+          <View style={[styles.inputContainer, errorMsg ? { borderColor: Colors.accentPink } : {}]}>
             <TextInput
               style={styles.input}
               placeholder="Enter TMDB API Key"
               placeholderTextColor={Colors.textMuted}
               value={apiKey}
-              onChangeText={setApiKey}
+              onChangeText={(text) => {
+                setApiKey(text);
+                if (errorMsg) setErrorMsg('');
+              }}
               autoCapitalize="none"
               autoCorrect={false}
             />
           </View>
+          
+          {errorMsg ? (
+            <Text style={styles.errorText}>{errorMsg}</Text>
+          ) : null}
 
           <TouchableOpacity onPress={openTMDB} style={styles.linkButton}>
             <Text style={styles.linkText}>Get your free API Key from TMDB</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={[styles.saveButton, !apiKey.trim() && styles.saveButtonDisabled]}
+            style={[styles.saveButtonContainer, (!apiKey.trim() || isValidating) && styles.saveButtonDisabled]}
             onPress={handleSave}
-            disabled={!apiKey.trim()}>
-            <Text style={styles.saveButtonText}>Save & Continue</Text>
+            disabled={!apiKey.trim() || isValidating}>
+            <LinearGradient
+              colors={[Colors.accentPurple, Colors.accentPink]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.saveButtonGradient}
+            >
+              {isValidating ? (
+                <ActivityIndicator color="#fff" size="small" />
+              ) : (
+                <Text style={styles.saveButtonText}>Save & Continue</Text>
+              )}
+            </LinearGradient>
           </TouchableOpacity>
 
         </LinearGradient>
@@ -121,15 +169,29 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     fontSize: FontSizes.xl,
     fontWeight: 'bold',
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.sm,
     textAlign: 'center',
   },
-  subtitle: {
+  subtitleContainer: {
+    marginBottom: Spacing.lg,
+  },
+  subtitleParagraph: {
     color: Colors.textSecondary,
     fontSize: FontSizes.sm,
     lineHeight: 20,
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.xs,
     textAlign: 'center',
+  },
+  quickTip: {
+    fontSize: FontSizes.sm,
+    color: 'rgba(255,255,255,0.85)',
+    marginBottom: Spacing.lg,
+    lineHeight: 20,
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.3)',
+    padding: Spacing.sm,
+    borderRadius: BorderRadius.md,
   },
   inputContainer: {
     backgroundColor: 'rgba(255,255,255,0.05)',
@@ -144,9 +206,15 @@ const styles = StyleSheet.create({
     paddingVertical: Platform.OS === 'android' ? 12 : 16,
     fontSize: FontSizes.md,
   },
+  errorText: {
+    color: Colors.accentPink,
+    fontSize: FontSizes.sm,
+    textAlign: 'center',
+    marginBottom: Spacing.md,
+  },
   linkButton: {
     paddingVertical: Spacing.sm,
-    marginBottom: Spacing.xl,
+    marginBottom: Spacing.md,
     alignItems: 'center',
   },
   linkText: {
@@ -155,10 +223,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     textDecorationLine: 'underline',
   },
-  saveButton: {
-    backgroundColor: Colors.accentPurple,
-    paddingVertical: 16,
+  saveButtonContainer: {
     borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+  },
+  saveButtonGradient: {
+    paddingVertical: 16,
     alignItems: 'center',
   },
   saveButtonDisabled: {

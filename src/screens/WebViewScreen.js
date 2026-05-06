@@ -9,6 +9,8 @@ import {
   ActivityIndicator,
   StatusBar,
   BackHandler,
+  NativeModules,
+  NativeEventEmitter,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -19,22 +21,57 @@ import { useWindowDimensions } from 'react-native';
 
 const WebViewScreen = ({navigation, route}) => {
   const {url, title, appId, color, isAdventure, cards, initialIndex, onUpdateIndex, type} = route.params;
+  
+  // 1. All hooks at the top
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
-  const isPiP = width < 400 || height < 400; // Rough threshold for PiP mode
+  const {width, height} = useWindowDimensions();
   const webViewRef = useRef(null);
+  const eventEmitterRef = useRef(null);
+  
   const [loading, setLoading] = useState(true);
+  const [isPiPState, setIsPiPState] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
   const [currentUrl, setCurrentUrl] = useState(url);
   const [pageTitle, setPageTitle] = useState(title || 'Loading...');
-  
-  // Track adventure progress locally
   const [advIndex, setAdvIndex] = useState(initialIndex || 0);
   const [isAdvLoading, setIsAdvLoading] = useState(false);
 
-  // Safe area handling
+  // 2. Derived state
+  const isPiP = isPiPState || (width > 0 && width < 400) || (height > 0 && height < 400);
   const topPadding = insets.top || StatusBar.currentHeight || 0;
   const bottomPadding = insets.bottom || 0;
+
+  // 3. Effects
+  useFocusEffect(
+    useCallback(() => {
+      // Enable PiP when focused
+      if (NativeModules.PiPModule) {
+        NativeModules.PiPModule.setPiPEnabled(true);
+        
+        // Initial check
+        NativeModules.PiPModule.isPiPActive().then(setIsPiPState).catch(() => {});
+
+        if (!eventEmitterRef.current) {
+          eventEmitterRef.current = new NativeEventEmitter(NativeModules.PiPModule);
+        }
+        
+        const subscription = eventEmitterRef.current.addListener('onPiPModeChanged', (isInPiP) => {
+          setIsPiPState(isInPiP);
+        });
+
+        // Polling fallback
+        const interval = setInterval(() => {
+          NativeModules.PiPModule.isPiPActive().then(setIsPiPState).catch(() => {});
+        }, 1000);
+        
+        return () => {
+          NativeModules.PiPModule.setPiPEnabled(false);
+          subscription.remove();
+          clearInterval(interval);
+        };
+      }
+    }, [width, height])
+  );
 
 
   // Handle Android back button
@@ -116,7 +153,7 @@ const WebViewScreen = ({navigation, route}) => {
   const themeColor = color || Colors.accentPurple;
 
   return (
-    <View style={[styles.screen, {paddingTop: topPadding}]}>
+    <View style={[styles.screen, {paddingTop: isPiP ? 0 : topPadding}]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       {/* Top Bar */}
@@ -181,6 +218,66 @@ const WebViewScreen = ({navigation, route}) => {
         mediaPlaybackRequiresUserAction={false}
         mixedContentMode="always"
         allowsFullscreenVideo={true}
+        injectedJavaScript={`
+          (function() {
+            // 1. Immediate Neutralization
+            window.alert = function() { return true; };
+            window.confirm = function() { return true; };
+            window.prompt = function() { return null; };
+            window.open = function() { return null; };
+
+            function applyStyles() {
+              // Re-neutralize in case site restores them
+              window.alert = function() { return true; };
+              window.confirm = function() { return true; };
+              
+              var isPiPMode = window.innerWidth < 300 || window.innerHeight < 300;
+              
+              var videos = document.querySelectorAll('video');
+              videos.forEach(function(v) {
+                if (isPiPMode) {
+                  v.style.setProperty('width', '100vw', 'important');
+                  v.style.setProperty('height', '100vh', 'important');
+                  v.style.setProperty('object-fit', 'contain', 'important');
+                  v.style.setProperty('position', 'fixed', 'important');
+                  v.style.setProperty('top', '0', 'important');
+                  v.style.setProperty('left', '0', 'important');
+                  v.style.setProperty('z-index', '2147483647', 'important');
+                  v.style.setProperty('background', 'black', 'important');
+                } else {
+                  v.style.setProperty('z-index', '1', 'important');
+                }
+                if (v.paused && isPiPMode) v.play().catch(function() {});
+              });
+
+              var blockers = document.querySelectorAll('[class*="overlay"], [class*="modal"], [class*="popup"], [id*="overlay"], [id*="modal"], [id*="popup"], div[style*="position: fixed"], div[style*="position: absolute"]');
+              blockers.forEach(function(el) {
+                if (el.tagName !== 'VIDEO') {
+                  var text = (el.innerText || el.textContent || "").toLowerCase();
+                  if (text.includes('robot') || text.includes('allow') || text.includes('continue')) {
+                    // Trace up to the main container to hide the whole modal
+                    var container = el;
+                    while (container.parentElement && container.parentElement.tagName !== 'BODY' && container.parentElement.tagName !== 'HTML') {
+                       if (window.getComputedStyle(container).position === 'fixed' || window.getComputedStyle(container).position === 'absolute') break;
+                       container = container.parentElement;
+                    }
+                    container.style.setProperty('display', 'none', 'important');
+                    container.style.setProperty('pointer-events', 'none', 'important');
+                    container.style.setProperty('opacity', '0', 'important');
+                    container.style.setProperty('visibility', 'hidden', 'important');
+                  }
+                }
+              });
+            }
+
+            applyStyles();
+            var observer = new MutationObserver(applyStyles);
+            observer.observe(document.body, { childList: true, subtree: true });
+            setInterval(applyStyles, 500); // More frequent check
+            window.onbeforeunload = null;
+          })();
+          true;
+        `}
         startInLoadingState={true}
         setSupportMultipleWindows={false}
         onShouldStartLoadWithRequest={(request) => {

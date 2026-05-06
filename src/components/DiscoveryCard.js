@@ -87,9 +87,9 @@ const styles = StyleSheet.create({
   },
   gradient: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
+    left: -1,
+    right: -1,
+    bottom: -1,
     height: '60%', // Fixed height for a more focused fade
   },
   badgeContainer: {

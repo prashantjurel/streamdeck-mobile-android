@@ -1,5 +1,5 @@
 // StreamDeck Mobile — Settings Screen
-import React, {useState, useEffect} from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -15,9 +15,10 @@ import {
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
-import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
+import { Colors, FontSizes, Spacing, BorderRadius } from '../theme/colors';
+import CustomAlert from '../components/CustomAlert';
 import {
   loadSettings,
   saveSettings,
@@ -26,7 +27,7 @@ import {
   saveApiKey as storageSaveApiKey,
 } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
-import {useApi} from '../context/ApiContext';
+import { useApi } from '../context/ApiContext';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
@@ -35,7 +36,7 @@ import Animated, {
   withTiming,
   runOnJS,
 } from 'react-native-reanimated';
-import {useFocusEffect} from '@react-navigation/native';
+import { useFocusEffect } from '@react-navigation/native';
 
 const REGIONS = [
   { code: 'IN', name: 'India', flag: '🇮🇳' },
@@ -45,7 +46,7 @@ const REGIONS = [
   { code: 'CA', name: 'Canada', flag: '🇨🇦' },
 ];
 
-const SettingsScreen = ({navigation}) => {
+const SettingsScreen = ({ navigation }) => {
   const insets = useSafeAreaInsets();
   const [settings, setSettings] = useState(getDefaultSettings());
   const [apiKey, setApiKeyState] = useState('');
@@ -56,6 +57,36 @@ const SettingsScreen = ({navigation}) => {
   const [newProviderUrl, setNewProviderUrl] = useState('');
   const [sportsPingStatus, setSportsPingStatus] = useState('idle');
   const [saved, setSaved] = useState(false);
+  const [alertConfig, setAlertConfig] = useState({ 
+    visible: false, 
+    title: '', 
+    message: '', 
+    onConfirm: () => setAlertConfig(prev => ({ ...prev, visible: false })),
+    confirmText: 'OK',
+    onCancel: null,
+    cancelText: null,
+    type: 'warning'
+  });
+
+  const showAlert = (title, message, onConfirm = null, confirmText = 'OK', onCancel = null, cancelText = null, type = 'warning') => {
+    setAlertConfig({
+      visible: true,
+      title,
+      message,
+      onConfirm: () => {
+        if (onConfirm) onConfirm();
+        setAlertConfig(prev => ({ ...prev, visible: false }));
+      },
+      confirmText,
+      onCancel: onCancel ? () => {
+        onCancel();
+        setAlertConfig(prev => ({ ...prev, visible: false }));
+      } : null,
+      cancelText,
+      type
+    });
+  };
+  const [showApiKey, setShowApiKey] = useState(false);
 
   // Auto-scroll and flash
   const scrollRef = React.useRef(null);
@@ -105,7 +136,7 @@ const SettingsScreen = ({navigation}) => {
           } else if (section === 'sports') {
             scrollRef.current?.scrollTo({ y: sportsY.current - 100, animated: true });
           }
-          
+
           // Flash for 3 seconds
           flashOpacity.value = withRepeat(
             withSequence(
@@ -131,7 +162,7 @@ const SettingsScreen = ({navigation}) => {
       setPingStatus('idle');
       return;
     }
-    
+
     setPingStatus('testing');
     const timer = setTimeout(async () => {
       try {
@@ -139,10 +170,10 @@ const SettingsScreen = ({navigation}) => {
         if (!/^https?:\/\//i.test(url)) {
           url = `https://${url}`;
         }
-        
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 6000);
-        
+
         await fetch(url, { method: 'HEAD', signal: controller.signal });
         clearTimeout(timeoutId);
         setPingStatus('success');
@@ -150,7 +181,7 @@ const SettingsScreen = ({navigation}) => {
         setPingStatus('error');
       }
     }, 800);
-    
+
     return () => clearTimeout(timer);
   }, [movieboxDomain]);
 
@@ -159,7 +190,7 @@ const SettingsScreen = ({navigation}) => {
       setSportsPingStatus('idle');
       return;
     }
-    
+
     setSportsPingStatus('testing');
     const timer = setTimeout(async () => {
       try {
@@ -167,10 +198,10 @@ const SettingsScreen = ({navigation}) => {
         if (!/^https?:\/\//i.test(url)) {
           url = `https://${url}`;
         }
-        
+
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 6000);
-        
+
         await fetch(url, { method: 'HEAD', signal: controller.signal });
         clearTimeout(timeoutId);
         setSportsPingStatus('success');
@@ -178,7 +209,7 @@ const SettingsScreen = ({navigation}) => {
         setSportsPingStatus('error');
       }
     }, 800);
-    
+
     return () => clearTimeout(timer);
   }, [newProviderUrl]);
 
@@ -190,6 +221,15 @@ const SettingsScreen = ({navigation}) => {
     };
     await saveSettings(newSettings);
     if (apiKey) {
+      try {
+        const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${apiKey}`);
+        if (res.status === 401) {
+          showAlert('Invalid API Key', 'The TMDB API Key you entered is invalid. Please check and try again.', null, 'OK', null, null, 'error');
+          return;
+        }
+      } catch (e) {
+        // network issue, ignore validation and let them save
+      }
       await saveKey(apiKey);
     } else {
       // If they cleared it, save empty string to storage and sync context
@@ -202,7 +242,7 @@ const SettingsScreen = ({navigation}) => {
 
   const addProvider = () => {
     if (!newProviderName || !newProviderUrl) {
-      Alert.alert('Error', 'Please enter both provider name and URL.');
+      showAlert('Error', 'Please enter both provider name and URL.', null, 'OK', null, null, 'error');
       return;
     }
     const updated = {
@@ -235,21 +275,21 @@ const SettingsScreen = ({navigation}) => {
 
 
   return (
-    <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
+    <View style={[styles.screen, { paddingBottom: insets.bottom || 80 }]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
-      <ScrollView 
+      <ScrollView
         ref={scrollRef}
         showsVerticalScrollIndicator={false}
-        contentContainerStyle={{paddingTop: topPadding}}
+        contentContainerStyle={{ paddingTop: topPadding }}
       >
-        <View style={{height: Spacing.md}} />
+        <View style={{ height: Spacing.md }} />
 
         {/* Header */}
         <View style={styles.headerSection}>
           <View style={styles.logoBox}>
-            <Image 
-              source={require('../assets/images/logo.png')} 
-              style={styles.logoImage} 
+            <Image
+              source={require('../assets/images/logo.png')}
+              style={styles.logoImage}
               resizeMode="contain"
             />
           </View>
@@ -263,25 +303,35 @@ const SettingsScreen = ({navigation}) => {
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>SMART SEARCH (TMDB API)</Text>
           <View style={styles.card}>
-            <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4}}>
-              <Text style={[styles.fieldLabel, {marginBottom: 0}]}>TMDB API Key</Text>
+            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+              <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>TMDB API Key</Text>
               <TouchableOpacity onPress={() => Linking.openURL('https://www.themoviedb.org/settings/api')}>
                 <Text style={styles.pingLink}>Get API Key ↗</Text>
               </TouchableOpacity>
             </View>
             <Text style={styles.fieldHint}>
-              Required for rich search. Tap the link above to generate your key.
-              {'\n\n'}<Text style={{fontWeight: 'bold', color: Colors.textSecondary}}>Quick Tip:</Text> When filling the TMDB API form, select "Developer" and simply type "Personal Use" or "N/A" for all the required fields (like App Name, URL, and Description) to skip the hassle!
+              StreamDeck uses TMDB to fetch movie posters, trending lists, and search results. You only need to set this up once, it's free and takes under 2 minutes.
+              {'\n\n'}<Text style={{ fontWeight: 'bold', color: Colors.textSecondary }}>Quick Tip:</Text> When filling the TMDB API form, select "Developer" and simply type "Personal Use" or "N/A" for all the required fields (like App Name, URL, and Description) to skip the hassle!
             </Text>
-            <TextInput
-              style={styles.input}
-              value={apiKey}
-              onChangeText={setApiKeyState}
-              placeholder="Paste your TMDB API key here..."
-              placeholderTextColor={Colors.textMuted}
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
+            <View style={styles.passwordInputContainer}>
+              <TextInput
+                style={styles.innerInput}
+                value={apiKey}
+                onChangeText={setApiKeyState}
+                placeholder="Paste your TMDB API key here..."
+                placeholderTextColor={Colors.textMuted}
+                autoCorrect={false}
+                autoCapitalize="none"
+                secureTextEntry={!showApiKey}
+              />
+              <TouchableOpacity
+                style={styles.eyeBtn}
+                onPress={() => setShowApiKey(!showApiKey)}
+                activeOpacity={0.7}
+              >
+                <Text style={styles.eyeIcon}>{showApiKey ? '👁️' : '👁️‍🗨️'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
 
@@ -293,7 +343,7 @@ const SettingsScreen = ({navigation}) => {
             <Text style={styles.fieldHint}>
               Select the country used for displaying trending content and platform recommendations.
             </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{gap: Spacing.sm}}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.sm }}>
               {REGIONS.map(region => {
                 const isActive = contentRegion === region.code;
                 return (
@@ -302,7 +352,7 @@ const SettingsScreen = ({navigation}) => {
                     onPress={() => setContentRegion(region.code)}
                     style={[styles.regionChip, isActive && styles.regionChipActive]}
                     activeOpacity={0.7}>
-                    <Text style={[styles.regionFlag, isActive && {opacity: 1}]}>{region.flag}</Text>
+                    <Text style={[styles.regionFlag, isActive && { opacity: 1 }]}>{region.flag}</Text>
                     <Text style={[styles.regionName, isActive && styles.regionNameActive]}>{region.name}</Text>
                   </TouchableOpacity>
                 );
@@ -312,7 +362,7 @@ const SettingsScreen = ({navigation}) => {
         </View>
 
         {/* Streaming Sources */}
-        <View 
+        <View
           style={styles.section}
           onLayout={e => movieboxY.current = e.nativeEvent.layout.y}
         >
@@ -334,11 +384,11 @@ const SettingsScreen = ({navigation}) => {
               autoCorrect={false}
               autoCapitalize="none"
             />
-            
+
             <View style={styles.pingContainer}>
               {pingStatus === 'idle' && (
                 <View>
-                  <Text style={[styles.pingText, {marginBottom: 4}]}>No source configured.</Text>
+                  <Text style={[styles.pingText, { marginBottom: 4 }]}>No source configured.</Text>
                   <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#streaming-sites')}>
                     <Text style={styles.pingLink}>Discover working sources here</Text>
                   </TouchableOpacity>
@@ -348,11 +398,11 @@ const SettingsScreen = ({navigation}) => {
                 <Text style={styles.pingText}>Testing connection...</Text>
               )}
               {pingStatus === 'success' && (
-                <Text style={[styles.pingText, {color: '#10b981'}]}>🟢 Source connected successfully</Text>
+                <Text style={[styles.pingText, { color: '#10b981' }]}>🟢 Source connected successfully</Text>
               )}
               {pingStatus === 'error' && (
                 <View>
-                  <Text style={[styles.pingText, {color: '#ff4d4d', marginBottom: 4}]}>🔴 Source unreachable</Text>
+                  <Text style={[styles.pingText, { color: '#ff4d4d', marginBottom: 4 }]}>🔴 Source unreachable</Text>
                   <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#streaming-sites')}>
                     <Text style={styles.pingLink}>Please choose a working site from here</Text>
                   </TouchableOpacity>
@@ -363,7 +413,7 @@ const SettingsScreen = ({navigation}) => {
         </View>
 
         {/* Live Sports Providers */}
-        <View 
+        <View
           style={styles.section}
           onLayout={e => sportsY.current = e.nativeEvent.layout.y}
         >
@@ -388,25 +438,25 @@ const SettingsScreen = ({navigation}) => {
 
             <View style={styles.addProviderSection}>
               <TextInput
-                style={[styles.input, {marginBottom: Spacing.sm}]}
+                style={[styles.input, { marginBottom: Spacing.sm }]}
                 value={newProviderName}
                 onChangeText={setNewProviderName}
                 placeholder="Provider name"
                 placeholderTextColor={Colors.textMuted}
               />
               <TextInput
-                style={[styles.input, {marginBottom: Spacing.md}]}
+                style={[styles.input, { marginBottom: Spacing.md }]}
                 value={newProviderUrl}
                 onChangeText={setNewProviderUrl}
                 placeholder="Provider URL (e.g. sportslivetoday.com)"
                 placeholderTextColor={Colors.textMuted}
                 autoCapitalize="none"
               />
-              
-              <View style={[styles.pingContainer, {marginBottom: Spacing.md, marginTop: 0}]}>
+
+              <View style={[styles.pingContainer, { marginBottom: Spacing.md, marginTop: 0 }]}>
                 {sportsPingStatus === 'idle' && (
                   <View>
-                    <Text style={[styles.pingText, {marginBottom: 4}]}>No provider URL entered.</Text>
+                    <Text style={[styles.pingText, { marginBottom: 4 }]}>No provider URL entered.</Text>
                     <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#live-tv')}>
                       <Text style={styles.pingLink}>Discover working providers here</Text>
                     </TouchableOpacity>
@@ -416,11 +466,11 @@ const SettingsScreen = ({navigation}) => {
                   <Text style={styles.pingText}>Testing connection...</Text>
                 )}
                 {sportsPingStatus === 'success' && (
-                  <Text style={[styles.pingText, {color: '#10b981'}]}>🟢 Source connected successfully</Text>
+                  <Text style={[styles.pingText, { color: '#10b981' }]}>🟢 Source connected successfully</Text>
                 )}
                 {sportsPingStatus === 'error' && (
                   <View>
-                    <Text style={[styles.pingText, {color: '#ff4d4d', marginBottom: 4}]}>🔴 Source unreachable</Text>
+                    <Text style={[styles.pingText, { color: '#ff4d4d', marginBottom: 4 }]}>🔴 Source unreachable</Text>
                     <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#live-tv')}>
                       <Text style={styles.pingLink}>Please choose a working site from here</Text>
                     </TouchableOpacity>
@@ -444,28 +494,23 @@ const SettingsScreen = ({navigation}) => {
           <View style={styles.card}>
             <TouchableOpacity
               style={styles.dangerBtn}
-              onPress={async () => {
-                Alert.alert(
-                  'Reset Discovery Vibe',
-                  'This will clear your current genres and mood history. Your saved movies in Library will stay. Continue?',
-                  [
-                    { text: 'Cancel', style: 'cancel' },
-                    { 
-                      text: 'Reset Vibe', 
-                      style: 'destructive',
-                      onPress: async () => {
-                        try {
-                          await AsyncStorage.multiRemove([
-                            'streamdeck_adventure_prefs',
-                            'streamdeck_adventure_recent_sources'
-                          ]);
-                          Alert.alert('Reset Complete', 'Your discovery vibes have been reset.');
-                        } catch (e) {
-                          Alert.alert('Error', 'Failed to clear data.');
-                        }
-                      }
+              onPress={() => {
+                showAlert(
+                  "Reset Library?",
+                  "This will clear your watchlist and saved discovery gems. This cannot be undone.",
+                  async () => {
+                    try {
+                      await AsyncStorage.removeItem('streamdeck_mobile_watchlist');
+                      await AsyncStorage.removeItem('streamdeck_mobile_adventure_saved');
+                      showAlert('Reset Complete', 'Your discovery vibes have been reset.', null, 'OK', null, null, 'success');
+                    } catch (e) {
+                      showAlert('Error', 'Failed to clear data.', null, 'OK', null, null, 'error');
                     }
-                  ]
+                  },
+                  "Reset",
+                  () => {},
+                  "Cancel",
+                  "warning"
                 );
               }}
               activeOpacity={0.7}>
@@ -488,8 +533,8 @@ const SettingsScreen = ({navigation}) => {
                   ? ['#10b981', '#059669']
                   : [Colors.accentPurple, Colors.accentPink]
               }
-              start={{x: 0, y: 0}}
-              end={{x: 1, y: 0}}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
               style={styles.saveGradient}>
               <Text style={styles.saveBtnText}>
                 {saved ? '✓ Saved!' : 'Save Settings'}
@@ -506,8 +551,19 @@ const SettingsScreen = ({navigation}) => {
           </Text>
         </View>
 
-        <View style={{height: 120}} />
+        <View style={{ height: 120 }} />
       </ScrollView>
+
+      <CustomAlert 
+        visible={alertConfig.visible}
+        title={alertConfig.title}
+        message={alertConfig.message}
+        onConfirm={alertConfig.onConfirm}
+        confirmText={alertConfig.confirmText}
+        onCancel={alertConfig.onCancel}
+        cancelText={alertConfig.cancelText}
+        type={alertConfig.type}
+      />
     </View>
   );
 };
@@ -552,7 +608,7 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xxl,
   },
   sectionLabel: {
-    fontSize: FontSizes.xs,
+    fontSize: FontSizes.sm,
     fontWeight: '800',
     color: Colors.textMuted,
     letterSpacing: 1.5,
@@ -572,10 +628,10 @@ const styles = StyleSheet.create({
     marginBottom: 4,
   },
   fieldHint: {
-    fontSize: FontSizes.xs,
+    fontSize: FontSizes.md,
     color: Colors.textMuted,
     marginBottom: Spacing.md,
-    lineHeight: 16,
+    lineHeight: 22,
   },
   input: {
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
@@ -585,6 +641,30 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     color: Colors.textPrimary,
     fontSize: FontSizes.md,
+  },
+  passwordInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+    borderRadius: BorderRadius.sm,
+    borderWidth: 1,
+    borderColor: Colors.borderSubtle,
+    overflow: 'hidden',
+  },
+  innerInput: {
+    flex: 1,
+    padding: Spacing.md,
+    color: Colors.textPrimary,
+    fontSize: FontSizes.md,
+  },
+  eyeBtn: {
+    paddingHorizontal: Spacing.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  eyeIcon: {
+    fontSize: 16,
+    opacity: 0.7,
   },
   regionChip: {
     flexDirection: 'row',
@@ -607,7 +687,7 @@ const styles = StyleSheet.create({
     opacity: 0.7,
   },
   regionName: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSizes.md,
     color: Colors.textMuted,
     fontWeight: '600',
   },
@@ -623,12 +703,12 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.05)',
   },
   pingText: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSizes.md,
     color: Colors.textMuted,
     fontWeight: '600',
   },
   pingLink: {
-    fontSize: FontSizes.sm,
+    fontSize: FontSizes.md,
     color: Colors.accentPurple,
     fontWeight: '700',
     textDecorationLine: 'underline',
@@ -708,7 +788,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     elevation: 8,
     shadowColor: Colors.accentPurple,
-    shadowOffset: {width: 0, height: 4},
+    shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 12,
   },

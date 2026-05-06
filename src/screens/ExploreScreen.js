@@ -1,6 +1,6 @@
 // StreamDeck Mobile — Explore Screen
-import React, {useState, useEffect, useCallback} from 'react';
-import {useFocusEffect} from '@react-navigation/native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -15,19 +15,19 @@ import {
   Modal,
   Linking,
 } from 'react-native';
-import {useSafeAreaInsets} from 'react-native-safe-area-context';
-import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
-import {searchTMDB, fetchNowPlaying, fetchTopRated, getImageUrl, fetchWatchProviders} from '../services/tmdb';
-import {loadSettings} from '../utils/storage';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Colors, FontSizes, Spacing, BorderRadius } from '../theme/colors';
+import { searchTMDB, fetchNowPlaying, fetchTopRated, getImageUrl, fetchWatchProviders } from '../services/tmdb';
+import { loadSettings } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
 import PosterCard from '../components/PosterCard';
 import LinearGradient from 'react-native-linear-gradient';
-import {useApi} from '../context/ApiContext';
-import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
+import { useApi } from '../context/ApiContext';
+import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
 
 
 
-const ExploreScreen = ({navigation, route}) => {
+const ExploreScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -35,7 +35,7 @@ const ExploreScreen = ({navigation, route}) => {
   const [topRated, setTopRated] = useState([]);
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(true);
-  
+
   // Selection Modal State
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [availableProviders, setAvailableProviders] = useState([]);
@@ -45,7 +45,7 @@ const ExploreScreen = ({navigation, route}) => {
 
   const topPadding = insets.top || StatusBar.currentHeight || 0;
 
-  const { hasKey, requestKey } = useApi();
+  const { hasKey, requestKey, invalidateKey } = useApi();
 
   useFocusEffect(
     useCallback(() => {
@@ -82,6 +82,7 @@ const ExploreScreen = ({navigation, route}) => {
       setNowPlaying(np);
       setTopRated(tr);
     } catch (e) {
+      if (e.message === 'INVALID_API_KEY') invalidateKey();
       console.error('[Explore] Load error:', e);
     } finally {
       setLoading(false);
@@ -98,6 +99,7 @@ const ExploreScreen = ({navigation, route}) => {
       const results = await searchTMDB(query);
       setSearchResults(results);
     } catch (e) {
+      if (e.message === 'INVALID_API_KEY') invalidateKey();
       console.error('[Explore] Search failed:', e);
     } finally {
       setSearching(false);
@@ -120,7 +122,7 @@ const ExploreScreen = ({navigation, route}) => {
     try {
       const mediaType = movie.media_type || (movie.title ? 'movie' : 'tv');
       const watchInfo = await fetchWatchProviders(movie.id, mediaType);
-      
+
       const found = [];
       if (watchInfo) {
         const allProviders = [
@@ -131,7 +133,13 @@ const ExploreScreen = ({navigation, route}) => {
         const uniqueIds = [...new Set(allProviders.map(p => p.provider_id))];
         uniqueIds.forEach(id => {
           if (OTT_PROVIDER_MAP[id]) {
-            found.push(OTT_PROVIDER_MAP[id]);
+            const tmdbProvider = allProviders.find(p => p.provider_id === id);
+            found.push({
+              ...OTT_PROVIDER_MAP[id],
+              logoUrl: tmdbProvider?.logo_path ? `https://image.tmdb.org/t/p/w200${tmdbProvider.logo_path}` : null,
+              icon: '📺',
+              color: '#333'
+            });
           }
         });
       }
@@ -139,17 +147,17 @@ const ExploreScreen = ({navigation, route}) => {
       // Always add MovieBox and YouTube as fallbacks/preferred hubs
       if (!found.find(p => p.id === 'moviebox')) {
         const domain = movieboxDomain.replace('http://', '').replace('https://', '');
-        found.push({ 
-          id: 'moviebox', 
-          name: 'MovieBox', 
-          color: '#E21D48', 
+        found.push({
+          id: 'moviebox',
+          name: 'MovieBox',
+          color: '#E21D48',
           icon: '🍿',
           logoUrl: null,
-          searchUrl: `https://${domain}/search?q=` 
+          searchUrl: `https://${domain}/search?q=`
         });
       }
       if (!found.find(p => p.id === 'youtube')) {
-         found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
+        found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
       }
 
       setAvailableProviders(found);
@@ -166,7 +174,7 @@ const ExploreScreen = ({navigation, route}) => {
     const tmdbId = selectedMovie.id;
 
     setShowPicker(false);
-    
+
     await navigateToOTT(
       provider,
       title,
@@ -177,7 +185,7 @@ const ExploreScreen = ({navigation, route}) => {
     );
   };
 
-  const renderSearchResult = ({item}) => {
+  const renderSearchResult = ({ item }) => {
     const title = item.title || item.name || 'Unknown';
     const year = item.release_date ? item.release_date.split('-')[0] : item.first_air_date ? item.first_air_date.split('-')[0] : '';
     const rating = item.vote_average ? item.vote_average.toFixed(1) : null;
@@ -190,10 +198,10 @@ const ExploreScreen = ({navigation, route}) => {
         onPress={() => handleMoviePress(item)}
         activeOpacity={0.7}>
         {posterUrl ? (
-          <Image source={{uri: posterUrl}} style={styles.resultPoster} />
+          <Image source={{ uri: posterUrl }} style={styles.resultPoster} />
         ) : (
           <View style={[styles.resultPoster, styles.resultPosterPlaceholder]}>
-            <Text style={{fontSize: 24}}>🎬</Text>
+            <Text style={{ fontSize: 24 }}>🎬</Text>
           </View>
         )}
         <View style={styles.resultInfo}>
@@ -219,15 +227,26 @@ const ExploreScreen = ({navigation, route}) => {
 
   if (!hasKey) {
     return (
-      <View style={[styles.screen, {paddingTop: topPadding, justifyContent: 'center', alignItems: 'center'}]}>
-        <Text style={{color: Colors.textMuted, fontSize: 16, textAlign: 'center', padding: 20}}>
-          Please add your TMDB API Key to search and explore movies.
+      <View style={[styles.screen, { paddingTop: topPadding, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }]}>
+        <Text style={{ fontSize: 40, marginBottom: 16 }}>🔑</Text>
+        <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+          One-Time Setup Required
         </Text>
-        <TouchableOpacity 
-          style={{marginTop: 20, padding: 12, backgroundColor: Colors.accentPurple, borderRadius: 8}}
+        <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+          StreamDeck needs a free TMDB API key to search and explore movies. This is a one-time setup, once saved, you won't be asked again.
+        </Text>
+        <TouchableOpacity
+          style={{ borderRadius: 12, overflow: 'hidden' }}
           onPress={requestKey}
         >
-          <Text style={{color: '#fff', fontWeight: 'bold'}}>Add API Key</Text>
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={{ paddingVertical: 14, paddingHorizontal: 28 }}
+          >
+            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' }}>Set Up API Key</Text>
+          </LinearGradient>
         </TouchableOpacity>
       </View>
     );
@@ -238,7 +257,7 @@ const ExploreScreen = ({navigation, route}) => {
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       {/* Search Bar */}
-      <View style={[styles.searchContainer, {paddingTop: topPadding + Spacing.md}]}>
+      <View style={[styles.searchContainer, { paddingTop: topPadding + Spacing.md }]}>
         <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
@@ -251,7 +270,7 @@ const ExploreScreen = ({navigation, route}) => {
             returnKeyType="search"
           />
           {searchQuery.length > 0 && (
-            <TouchableOpacity onPress={() => {setSearchQuery(''); setSearchResults([]);}}>
+            <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
               <Text style={styles.clearIcon}>✕</Text>
             </TouchableOpacity>
           )}
@@ -279,7 +298,7 @@ const ExploreScreen = ({navigation, route}) => {
           )}
         </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{paddingTop: Spacing.md}}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: Spacing.md }}>
           {nowPlaying.length > 0 && (
             <View style={styles.section}>
               <SectionHeader title="Now Playing" subtitle="In theaters" />
@@ -288,7 +307,7 @@ const ExploreScreen = ({navigation, route}) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.horizontalList}
-                renderItem={({item}) => <PosterCard movie={item} onPress={handleMoviePress} />}
+                renderItem={({ item }) => <PosterCard movie={item} onPress={handleMoviePress} />}
               />
             </View>
           )}
@@ -300,11 +319,11 @@ const ExploreScreen = ({navigation, route}) => {
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 contentContainerStyle={styles.horizontalList}
-                renderItem={({item}) => <PosterCard movie={item} onPress={handleMoviePress} />}
+                renderItem={({ item }) => <PosterCard movie={item} onPress={handleMoviePress} />}
               />
             </View>
           )}
-          <View style={{height: 120}} />
+          <View style={{ height: 120 }} />
         </ScrollView>
       )}
 
@@ -317,48 +336,48 @@ const ExploreScreen = ({navigation, route}) => {
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
           <View style={styles.modalContent}>
-             <View style={styles.modalHeader}>
-                <View style={styles.modalHandle} />
-                <Text style={styles.modalTitle}>Available On</Text>
-                {checkingAvailability ? (
-                  <ActivityIndicator size="small" color={Colors.accentPurple} style={{marginTop: 10}} />
-                ) : (
-                  <Text style={styles.modalSubtitle}>Streaming now in India</Text>
-                )}
-             </View>
-             
-             <View style={styles.providerGrid}>
-                {!checkingAvailability && availableProviders.map(provider => (
-                  <TouchableOpacity 
-                    key={provider.id} 
-                    style={styles.providerItem}
-                    onPress={() => handleSelectProvider(provider)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
-                      {provider.logoUrl ? (
-                        <Image
-                          source={{uri: provider.logoUrl}}
-                          style={styles.providerLogo}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Text style={styles.providerIconText}>{provider.icon}</Text>
-                      )}
-                    </View>
-                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                  </TouchableOpacity>
-                ))}
-                {!checkingAvailability && availableProviders.length === 1 && availableProviders[0].id === 'youtube' && (
-                  <View style={styles.noProvidersBox}>
-                    <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing YouTube and MovieBox as fallbacks.</Text>
-                  </View>
-                )}
-             </View>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Available On</Text>
+              {checkingAvailability ? (
+                <ActivityIndicator size="small" color={Colors.accentPurple} style={{ marginTop: 10 }} />
+              ) : (
+                <Text style={styles.modalSubtitle}>Streaming now in India</Text>
+              )}
+            </View>
 
-             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
-                <Text style={styles.closeModalText}>Cancel</Text>
-             </TouchableOpacity>
+            <View style={styles.providerGrid}>
+              {!checkingAvailability && availableProviders.map(provider => (
+                <TouchableOpacity
+                  key={provider.id}
+                  style={styles.providerItem}
+                  onPress={() => handleSelectProvider(provider)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
+                    {provider.logoUrl ? (
+                      <Image
+                        source={{ uri: provider.logoUrl }}
+                        style={styles.providerLogo}
+                        resizeMode="contain"
+                      />
+                    ) : (
+                      <Text style={styles.providerIconText}>{provider.icon}</Text>
+                    )}
+                  </View>
+                  <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                </TouchableOpacity>
+              ))}
+              {!checkingAvailability && availableProviders.length === 1 && availableProviders[0].id === 'youtube' && (
+                <View style={styles.noProvidersBox}>
+                  <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing YouTube and MovieBox as fallbacks.</Text>
+                </View>
+              )}
+            </View>
+
+            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
+              <Text style={styles.closeModalText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -433,7 +452,7 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.08)',
     elevation: 24,
     shadowColor: '#000',
-    shadowOffset: {width: 0, height: -8},
+    shadowOffset: { width: 0, height: -8 },
     shadowOpacity: 0.4,
     shadowRadius: 20,
   },

@@ -38,6 +38,10 @@ export async function fetchTrendingContent(region = 'IN') {
       fetch(`${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&with_watch_providers=119&language=en-US&sort_by=popularity.desc`) // 119 = Amazon Prime
     ]);
 
+    if (globalRes.status === 401) {
+      throw new Error('INVALID_API_KEY');
+    }
+
     const globalData = await globalRes.json();
     const localMovieData = await localMovieRes.json();
     const localTvData = await localTvRes.json();
@@ -59,6 +63,9 @@ export async function fetchTrendingContent(region = 'IN') {
 
     return { global, local, netflix, prime };
   } catch (e) {
+    if (e.message === 'INVALID_API_KEY') {
+      throw e;
+    }
     console.error('[TMDB] Failed to fetch trending content:', e);
     return { global: [], local: [], netflix: [], prime: [] };
   }
@@ -81,6 +88,10 @@ export async function searchTMDB(query) {
       ),
     ]);
 
+    if (movieRes.status === 401 || tvRes.status === 401) {
+      throw new Error('INVALID_API_KEY');
+    }
+
     const movieData = await movieRes.json();
     const tvData = await tvRes.json();
 
@@ -91,6 +102,7 @@ export async function searchTMDB(query) {
 
     return combined.slice(0, 20);
   } catch (e) {
+    if (e.message === 'INVALID_API_KEY') throw e;
     console.error('[TMDB] Search failed:', e);
     return [];
   }
@@ -107,9 +119,12 @@ export async function fetchNowPlaying() {
     const res = await fetch(
       `${TMDB_BASE}/movie/now_playing?api_key=${apiKey}&page=1`,
     );
+    if (res.status === 401) throw new Error('INVALID_API_KEY');
+    
     const data = await res.json();
     return data.results || [];
   } catch (e) {
+    if (e.message === 'INVALID_API_KEY') throw e;
     console.error('[TMDB] Now Playing failed:', e);
     return [];
   }
@@ -126,9 +141,12 @@ export async function fetchTopRated() {
     const res = await fetch(
       `${TMDB_BASE}/movie/top_rated?api_key=${apiKey}&page=1`,
     );
+    if (res.status === 401) throw new Error('INVALID_API_KEY');
+
     const data = await res.json();
     return data.results || [];
   } catch (e) {
+    if (e.message === 'INVALID_API_KEY') throw e;
     console.error('[TMDB] Top Rated failed:', e);
     return [];
   }
