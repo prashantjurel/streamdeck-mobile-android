@@ -16,6 +16,7 @@ import {
   Platform,
   Alert,
   Image,
+  Dimensions,
   Animated as RNAnimated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -104,12 +105,6 @@ const HomeSkeleton = ({ visible }) => {
         contentContainerStyle={{ paddingTop: topPadding + 10, paddingBottom: 100 }}
         style={{ width: '100%' }}
       >
-        {/* Header Skeleton */}
-        <View style={styles.skeletonHeader}>
-          <RenderSkeletonItem style={styles.skeletonSearch} />
-          <RenderSkeletonItem style={styles.skeletonAvatar} />
-        </View>
-
         {/* Category Chips Skeleton */}
         <View style={styles.skeletonCategoryRow}>
           {[1, 2, 3, 4].map(i => (
@@ -126,7 +121,19 @@ const HomeSkeleton = ({ visible }) => {
           </View>
         </View>
 
-        {/* Rows Skeleton */}
+        {/* Continue Watching Skeleton */}
+        <View style={styles.skeletonRowContainer}>
+          <RenderSkeletonItem style={styles.skeletonRowTitle} />
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
+            {[1, 2].map(i => (
+              <View key={i} style={styles.skeletonCWCardContainer}>
+                <RenderSkeletonItem style={styles.skeletonCWCard} />
+              </View>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Rows Skeleton (Posters) */}
         {[1, 2].map(row => (
           <View key={row} style={styles.skeletonRowContainer}>
             <RenderSkeletonItem style={styles.skeletonRowTitle} />
@@ -690,23 +697,6 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bgPrimary,
   },
-  skeletonHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 20,
-    marginBottom: 20,
-    gap: 12,
-  },
-  skeletonSearch: {
-    flex: 1,
-    height: 44,
-    borderRadius: 12,
-  },
-  skeletonAvatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-  },
   skeletonCategoryRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -715,8 +705,8 @@ const styles = StyleSheet.create({
   },
   skeletonChip: {
     width: 90,
-    height: 36,
-    borderRadius: 18,
+    height: 38,
+    borderRadius: 12,
   },
   skeletonHeroContainer: {
     marginBottom: 40,
@@ -724,7 +714,7 @@ const styles = StyleSheet.create({
   },
   skeletonHero: {
     width: '90%',
-    height: 480,
+    height: 520,
     borderRadius: 30,
     marginBottom: 20,
   },
@@ -752,17 +742,25 @@ const styles = StyleSheet.create({
     marginLeft: 20,
     marginBottom: 20,
   },
+  skeletonCWCardContainer: {
+    marginRight: 18,
+  },
+  skeletonCWCard: {
+    width: Dimensions.get('window').width * 0.42,
+    height: (Dimensions.get('window').width * 0.42) * 0.56,
+    borderRadius: 16,
+  },
   skeletonCardContainer: {
     marginRight: 18,
     gap: 10,
   },
   skeletonCard: {
-    width: 150,
-    height: 220,
+    width: Dimensions.get('window').width * 0.28,
+    height: (Dimensions.get('window').width * 0.28) * 1.7,
     borderRadius: 16,
   },
   skeletonCardText: {
-    width: 100,
+    width: 80,
     height: 14,
     borderRadius: 7,
   },

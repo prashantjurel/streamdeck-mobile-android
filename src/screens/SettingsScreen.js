@@ -220,9 +220,10 @@ const SettingsScreen = ({ navigation }) => {
       contentRegion,
     };
     await saveSettings(newSettings);
-    if (apiKey) {
+    const cleanKey = apiKey ? apiKey.replace(/\s+/g, '') : '';
+    if (cleanKey) {
       try {
-        const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${apiKey}`);
+        const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${cleanKey}`);
         if (res.status === 401) {
           showAlert('Invalid API Key', 'The TMDB API Key you entered is invalid. Please check and try again.', null, 'OK', null, null, 'error');
           return;
@@ -230,7 +231,7 @@ const SettingsScreen = ({ navigation }) => {
       } catch (e) {
         // network issue, ignore validation and let them save
       }
-      await saveKey(apiKey);
+      await saveKey(cleanKey);
     } else {
       // If they cleared it, save empty string to storage and sync context
       await storageSaveApiKey('');

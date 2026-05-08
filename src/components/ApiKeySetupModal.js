@@ -20,7 +20,7 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
   const [errorMsg, setErrorMsg] = useState('');
 
   const handleSave = async () => {
-    const key = apiKey.trim();
+    const key = apiKey.replace(/\s+/g, '');
     if (!key) return;
 
     setIsValidating(true);

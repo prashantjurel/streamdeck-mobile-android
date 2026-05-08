@@ -1,5 +1,6 @@
 package com.streamdeck.mobile
 
+import android.os.Bundle
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
@@ -11,6 +12,10 @@ import android.content.res.Configuration
 import com.facebook.react.bridge.ReactApplicationContext
 
 class MainActivity : ReactActivity() {
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(null)
+  }
+
   companion object {
     var isPiPAllowed = false
   }
