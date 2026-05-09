@@ -24,6 +24,7 @@ import PosterCard from '../components/PosterCard';
 import LinearGradient from 'react-native-linear-gradient';
 import { useApi } from '../context/ApiContext';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 
 
@@ -144,21 +145,53 @@ const ExploreScreen = ({ navigation, route }) => {
         });
       }
 
-      // Always add MovieBox and YouTube as fallbacks/preferred hubs
-      if (!found.find(p => p.id === 'moviebox')) {
-        const domain = movieboxDomain.replace('http://', '').replace('https://', '');
-        found.push({
-          id: 'moviebox',
-          name: 'MovieBox',
-          color: '#E21D48',
-          icon: '🍿',
-          logoUrl: null,
-          searchUrl: `https://${domain}/search?q=`
+      // Always Add Enabled MovieBox Sources as Primary Hubs
+      const settings = await loadSettings();
+      const movieboxSources = settings.movieboxSources || [];
+
+      (movieboxSources || [])
+        .filter(s => s.enabled)
+        .forEach((s, idx) => {
+          const mbDomain = s.url.trim();
+          const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+          
+          // Personality Engine
+          const searchSource = (s.name || mbSearchDomain).toLowerCase();
+          let icon = 'movie-open-play';
+          if (searchSource.includes('tv') || searchSource.includes('live')) icon = 'television-play';
+          else if (searchSource.includes('flix') || searchSource.includes('cine')) icon = 'video-box';
+          else if (searchSource.includes('box')) icon = 'play-box-multiple';
+          else {
+            const icons = ['movie-open-play', 'video-box', 'play-box-multiple', 'movie-filter'];
+            icon = icons[(s.name || mbSearchDomain).length % icons.length];
+          }
+
+          const colors = ['#E21D48', '#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#14b8a6', '#6366f1'];
+          let hash = 0;
+          const name = s.name || mbSearchDomain;
+          for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+          const color = colors[Math.abs(hash) % colors.length];
+
+          found.push({
+            id: `moviebox_${idx}`,
+            name: s.name || mbSearchDomain, // Show specific domain name
+            color: color,
+            icon: icon,
+            logoUrl: null,
+            searchUrl: `https://${mbSearchDomain}/search?q=`,
+            customDomain: mbDomain
+          });
         });
-      }
-      if (!found.find(p => p.id === 'youtube')) {
-        found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
-      }
+
+      // Always Add YouTube as Primary Hub
+      found.push({
+        id: 'youtube',
+        name: 'YouTube',
+        color: '#FF0000',
+        icon: 'youtube',
+        logoUrl: null,
+        searchUrl: 'https://www.youtube.com/results?search_query='
+      });
 
       setAvailableProviders(found);
     } catch (e) {
@@ -256,8 +289,16 @@ const ExploreScreen = ({ navigation, route }) => {
     <View style={styles.screen}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
-      {/* Search Bar */}
+      {/* Search Bar & Back Button */}
       <View style={[styles.searchContainer, { paddingTop: topPadding + Spacing.md }]}>
+        <TouchableOpacity 
+          style={styles.backButton} 
+          onPress={() => navigation.goBack()}
+          activeOpacity={0.7}
+        >
+          <Icon name="chevron-left" size={24} color={Colors.textPrimary} />
+        </TouchableOpacity>
+
         <View style={styles.searchBar}>
           <Text style={styles.searchIcon}>🔍</Text>
           <TextInput
@@ -347,31 +388,33 @@ const ExploreScreen = ({ navigation, route }) => {
             </View>
 
             <View style={styles.providerGrid}>
-              {!checkingAvailability && availableProviders.map(provider => (
-                <TouchableOpacity
-                  key={provider.id}
-                  style={styles.providerItem}
-                  onPress={() => handleSelectProvider(provider)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
-                    {provider.logoUrl ? (
-                      <Image
-                        source={{ uri: provider.logoUrl }}
-                        style={styles.providerLogo}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <Text style={styles.providerIconText}>{provider.icon}</Text>
-                    )}
-                  </View>
-                  <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                </TouchableOpacity>
-              ))}
-              {!checkingAvailability && availableProviders.length === 1 && availableProviders[0].id === 'youtube' && (
-                <View style={styles.noProvidersBox}>
-                  <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing YouTube and MovieBox as fallbacks.</Text>
+              {checkingAvailability ? (
+                <View style={styles.modalLoading}>
+                  <ActivityIndicator size="small" color={Colors.accentPurple} />
+                  <Text style={styles.modalLoadingText}>Curating streams...</Text>
                 </View>
+              ) : (
+                availableProviders.map(provider => (
+                  <TouchableOpacity
+                    key={provider.id}
+                    style={styles.providerItem}
+                    onPress={() => handleSelectProvider(provider)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
+                      {provider.logoUrl ? (
+                        <Image
+                          source={{ uri: provider.logoUrl }}
+                          style={styles.providerLogo}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Icon name={provider.icon} size={32} color="#fff" />
+                      )}
+                    </View>
+                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                  </TouchableOpacity>
+                ))
               )}
             </View>
 
@@ -387,8 +430,23 @@ const ExploreScreen = ({ navigation, route }) => {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.bgPrimary },
-  searchContainer: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md },
+  searchContainer: { 
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: Spacing.xl, 
+    paddingBottom: Spacing.md,
+    gap: Spacing.md,
+  },
+  backButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   searchBar: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: 'rgba(255, 255, 255, 0.08)',
@@ -518,6 +576,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: 'rgba(255,255,255,0.75)',
     textAlign: 'center',
+  },
+  modalLoading: {
+    padding: 30,
+    alignItems: 'center',
+    width: '100%',
+  },
+  modalLoadingText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 12,
   },
   noProvidersBox: {
     width: '100%',

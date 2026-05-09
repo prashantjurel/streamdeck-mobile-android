@@ -2,22 +2,22 @@
 import { getApiKey } from '../utils/storage';
 
 export const MOVIE_GENRES = [
-  { id: 28, name: 'Action', emoji: '💥' },
-  { id: 12, name: 'Adventure', emoji: '🗺️' },
-  { id: 16, name: 'Animation', emoji: '✨' },
-  { id: 35, name: 'Comedy', emoji: '😂' },
-  { id: 80, name: 'Crime', emoji: '🕵️' },
-  { id: 99, name: 'Documentary', emoji: '🌍' },
-  { id: 18, name: 'Drama', emoji: '🎭' },
-  { id: 10751, name: 'Family', emoji: '👨‍👩‍👧‍👦' },
-  { id: 14, name: 'Fantasy', emoji: '🧙‍♂️' },
-  { id: 36, name: 'History', emoji: '📜' },
-  { id: 27, name: 'Horror', emoji: '👻' },
-  { id: 10402, name: 'Music', emoji: '🎵' },
-  { id: 9648, name: 'Mystery', emoji: '🔍' },
-  { id: 10749, name: 'Romance', emoji: '❤️' },
-  { id: 878, name: 'Sci-Fi', emoji: '🛸' },
-  { id: 53, name: 'Thriller', emoji: '😱' },
+  { id: 28, name: 'Action', icon: 'flame' },
+  { id: 12, name: 'Adventure', icon: 'compass' },
+  { id: 16, name: 'Animation', icon: 'color-palette' },
+  { id: 35, name: 'Comedy', icon: 'happy' },
+  { id: 80, name: 'Crime', icon: 'finger-print' },
+  { id: 99, name: 'Documentary', icon: 'globe' },
+  { id: 18, name: 'Drama', icon: 'mask' },
+  { id: 10751, name: 'Family', icon: 'people' },
+  { id: 14, name: 'Fantasy', icon: 'color-wand' },
+  { id: 36, name: 'History', icon: 'library' },
+  { id: 27, name: 'Horror', icon: 'skull' },
+  { id: 10402, name: 'Music', icon: 'musical-notes' },
+  { id: 9648, name: 'Mystery', icon: 'telescope' },
+  { id: 10749, name: 'Romance', icon: 'heart' },
+  { id: 878, name: 'Sci-Fi', icon: 'rocket' },
+  { id: 53, name: 'Thriller', icon: 'flashlight' },
 ];
 
 export const fetchMovieRecommendations = async (genreIds = [], page = 1) => {

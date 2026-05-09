@@ -73,7 +73,14 @@ TMDB_API_KEY=your_api_key_here
 ```
 *(Alternatively, you can set this up directly inside the app via the Settings Screen).*
 
-### 4. Run the App
+### 4. Cloud Sync Setup (Optional)
+To enable **Cloud Sync** (saving your Library and Settings to the cloud), you must provide your own Firebase configuration:
+1. Create a project in the [Firebase Console](https://console.firebase.google.com/).
+2. Add an Android app with the package name `com.streamdeck.mobile`.
+3. Download the `google-services.json` and place it in the `android/app/` directory.
+4. Ensure you register your debug/release **SHA-1 fingerprints** in the Firebase settings to enable Google Sign-In.
+
+### 5. Run the App
 Start the Metro Bundler:
 ```bash
 npx react-native start

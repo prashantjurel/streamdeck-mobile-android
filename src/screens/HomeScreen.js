@@ -36,11 +36,13 @@ import HeroSpotlight from '../components/HeroSpotlight';
 import ContinueWatchingRow from '../components/ContinueWatchingRow';
 import TrendingRow from '../components/TrendingRow';
 import { fetchTrendingContent, fetchWatchProviders, getImageUrl } from '../services/tmdb';
-import { loadContinueWatching, loadSettings, toggleWatchlistItem } from '../utils/storage';
+import { loadContinueWatching, loadSettings, toggleWatchlistItem, loadWatchlist } from '../utils/storage';
 import UpdateModal from '../components/UpdateModal';
 import { fetchLiveSportsData } from '../services/sports';
 import { useApi } from '../context/ApiContext';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const HomeSkeleton = ({ visible }) => {
   const insets = useSafeAreaInsets();
@@ -152,8 +154,64 @@ const HomeSkeleton = ({ visible }) => {
   );
 };
 
+const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
+  const isSelected = selectedMediaType === cat.id;
+  const rotation = useSharedValue(0);
+
+  useEffect(() => {
+    if (isSelected) {
+      rotation.value = withRepeat(
+        withTiming(360, { duration: 3000, easing: Easing.linear }),
+        -1,
+        false
+      );
+    } else {
+      rotation.value = 0;
+    }
+  }, [isSelected]);
+
+  const animatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
+
+  return (
+    <TouchableOpacity
+      onPress={() => setSelectedMediaType(cat.id)}
+      activeOpacity={0.8}
+      style={styles.categoryChipContainer}
+    >
+      <View style={[styles.categoryChip, isSelected && styles.categoryChipActive]}>
+        {isSelected && (
+          <Animated.View style={[styles.glowBorder, animatedStyle]}>
+            <LinearGradient
+              colors={['#8b5cf6', 'transparent', '#ec4899', 'transparent', '#8b5cf6']}
+              style={{ flex: 1 }}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+            />
+          </Animated.View>
+        )}
+        <View style={[styles.categoryChipInner, isSelected && styles.categoryChipInnerActive]}>
+          <Ionicons 
+            name={cat.icon} 
+            size={16} 
+            color={isSelected ? '#fff' : 'rgba(255,255,255,0.4)'} 
+            style={{ marginRight: 6 }} 
+          />
+          <Text style={[styles.categoryText, isSelected && styles.categoryTextActive]}>
+            {cat.name}
+          </Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
 const HomeScreen = ({ navigation }) => {
   const insets = useSafeAreaInsets();
+  const { hasKey, requestKey, invalidateKey } = useApi();
+  
+  // ─── STABLE HOOK BLOCK ──────────────────────────────────────────
   const [globalTrending, setGlobalTrending] = useState([]);
   const [localTrending, setLocalTrending] = useState([]);
   const [netflixTrending, setNetflixTrending] = useState([]);
@@ -161,25 +219,18 @@ const HomeScreen = ({ navigation }) => {
   const [regionName, setRegionName] = useState('India');
   const [continueWatching, setContinueWatching] = useState([]);
   const [heroItems, setHeroItems] = useState([]);
-  const { hasKey, requestKey, invalidateKey } = useApi();
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
+  const [isFetchingProviders, setIsFetchingProviders] = useState(false);
   const [showRedirectWarning, setShowRedirectWarning] = useState(false);
   const [redirectInfo, setRedirectInfo] = useState(null);
   const [selectedQuickItem, setSelectedQuickItem] = useState(null);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [customProviders, setCustomProviders] = useState([]);
-  const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
+  const [movieboxSources, setMovieboxSources] = useState([]);
   const [selectedMediaType, setSelectedMediaType] = useState('all'); // 'all', 'movie', 'tv'
-
-  useFocusEffect(
-    useCallback(() => {
-      if (!hasKey) {
-        requestKey();
-      }
-    }, [hasKey])
-  );
+  const [watchlist, setWatchlist] = useState([]);
 
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
@@ -191,7 +242,9 @@ const HomeScreen = ({ navigation }) => {
       const settings = await loadSettings();
       const region = settings.contentRegion || 'IN';
       setCustomProviders(settings.liveSportsProviders || []);
-      setMovieboxDomain(settings.movieboxDomain || 'moviebox.mov');
+      setMovieboxSources(settings.movieboxSources || []);
+      const wl = await loadWatchlist();
+      setWatchlist(wl || []);
 
       const REGION_NAMES = {
         IN: 'India',
@@ -269,7 +322,15 @@ const HomeScreen = ({ navigation }) => {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [hasKey]);
+  }, [invalidateKey]); // Stable dependency
+
+  useFocusEffect(
+    useCallback(() => {
+      if (!hasKey) {
+        requestKey();
+      }
+    }, [hasKey, requestKey])
+  );
 
   useEffect(() => {
     if (hasKey) {
@@ -291,27 +352,34 @@ const HomeScreen = ({ navigation }) => {
   }, [loadData]);
 
   const getCustomProviderAppearance = (name, url) => {
-    const text = (name + url).toLowerCase();
-    let icon = '⚡';
-    if (text.includes('cric')) icon = '🏏';
-    else if (text.includes('foot') || text.includes('soccer')) icon = '⚽';
-    else if (text.includes('f1') || text.includes('race')) icon = '🏎️';
-    else if (text.includes('sport')) icon = '🏟️';
-    else if (text.includes('tv') || text.includes('stream') || text.includes('watch')) icon = '📺';
-    else if (text.includes('live')) icon = '🔴';
-    else if (text.includes('play')) icon = '▶️';
-    else if (text.includes('flix') || text.includes('movie')) icon = '🍿';
-    const colors = ['#FF3366', '#8B5CF6', '#3B82F6', '#10B981', '#F59E0B', '#EC4899', '#14B8A6', '#6366F1'];
+    const searchSource = (name + url).toLowerCase();
+    let icon = 'movie-open-play'; // Premium default
+    
+    if (searchSource.includes('cric')) icon = 'trophy';
+    else if (searchSource.includes('foot') || searchSource.includes('soccer')) icon = 'football';
+    else if (searchSource.includes('f1') || searchSource.includes('race')) icon = 'speedometer';
+    else if (searchSource.includes('sport')) icon = 'ribbon';
+    else if (searchSource.includes('tv') || searchSource.includes('live')) icon = 'television-play';
+    else if (searchSource.includes('flix') || searchSource.includes('cine')) icon = 'video-box';
+    else if (searchSource.includes('box')) icon = 'play-box-multiple';
+    else if (searchSource.includes('stream') || searchSource.includes('watch')) icon = 'play-circle';
+    else {
+      // Deterministic choice based on name length for variety
+      const icons = ['movie-open-play', 'video-box', 'play-box-multiple', 'movie-filter'];
+      icon = icons[name.length % icons.length];
+    }
+
+    const colors = ['#E21D48', '#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#14b8a6', '#6366f1'];
     let hash = 0;
     for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return { icon, color: colors[Math.abs(hash) % colors.length] };
   };
 
   const PROVIDER_CONFIG = {
-    'IPL Live': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: '⭐', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
-    'Football': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: '⭐', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
-    'F1 Live': [{ id: 'fancode', name: 'FanCode', appScheme: 'fancode://', url: 'https://fancode.com', color: '#FF6B35', icon: '⚽', logoUrl: null }],
-    'WWE': [{ id: 'sonyliv', name: 'SonyLIV', appScheme: 'sonyliv://', url: 'https://www.sonyliv.com', color: '#2e2e6e', icon: '📺', logoUrl: 'https://image.tmdb.org/t/p/w200/tBhjAMfKnkzJNmOiMB8DsBx5QAp.jpg' }]
+    'IPL Live': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: 'star', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
+    'Football': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: 'star', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
+    'F1 Live': [{ id: 'fancode', name: 'FanCode', appScheme: 'fancode://', url: 'https://fancode.com', color: '#FF6B35', icon: 'football', logoUrl: null }],
+    'WWE': [{ id: 'sonyliv', name: 'SonyLIV', appScheme: 'sonyliv://', url: 'https://www.sonyliv.com', color: '#2e2e6e', icon: 'tv', logoUrl: 'https://image.tmdb.org/t/p/w200/tBhjAMfKnkzJNmOiMB8DsBx5QAp.jpg' }]
   };
 
   // ── + Button: Add / remove from library ───────────────
@@ -319,6 +387,7 @@ const HomeScreen = ({ navigation }) => {
     if (movie.isSports) return; // Sports can't be added to library
     try {
       const updated = await toggleWatchlistItem(movie);
+      setWatchlist(updated);
       const isNowInList = updated.some(m => m.id === movie.id);
       const title = movie.title || movie.name || 'Item';
       const msg = isNowInList
@@ -360,6 +429,9 @@ const HomeScreen = ({ navigation }) => {
     const mediaType = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
     const tmdbId = movie.id;
     setSelectedQuickItem({ name: title, mediaType, tmdbId });
+    setAvailableProviders([]); // Clear previous
+    setIsFetchingProviders(true);
+    setShowPicker(true); // OPEN MODAL IMMEDIATELY for instant feedback
 
     try {
       const providers = await fetchWatchProviders(movie.id, mediaType);
@@ -375,33 +447,59 @@ const HomeScreen = ({ navigation }) => {
             streamingProviders.push({
               ...mapped,
               logoUrl: p.logo_path ? `https://image.tmdb.org/t/p/w200${p.logo_path}` : null,
-              icon: '📺',
+              icon: 'tv',
               color: '#333',
             });
           }
         });
       }
 
-      // Add MovieBox as a universal fallback for movies/TV
-      const mbDomain = movieboxDomain.trim();
-      const mbUrl = mbDomain.startsWith('http') ? mbDomain : `https://${mbDomain}`;
-      const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+      // Always Add Enabled MovieBox Sources as Primary Hubs
+      (movieboxSources || [])
+        .filter(s => s.enabled)
+        .forEach((s, idx) => {
+          const mbDomain = s.url.trim();
+          const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+          const appearance = getCustomProviderAppearance(s.name || mbSearchDomain, mbDomain);
+          streamingProviders.push({
+            id: `moviebox_${idx}`,
+            name: s.name || mbSearchDomain, // Show specific domain
+            icon: appearance.icon,
+            color: appearance.color,
+            logoUrl: null,
+            searchUrl: `https://${mbSearchDomain}/search?q=`,
+            appScheme: null,
+            customDomain: mbDomain,
+          });
+        });
+
+      // Always Add YouTube as Primary Hub
       streamingProviders.push({
-        id: 'moviebox',
-        name: 'MovieBox',
-        icon: '🍿',
-        color: '#E21D48',
+        id: 'youtube',
+        name: 'YouTube',
+        icon: 'youtube',
+        color: '#FF0000',
         logoUrl: null,
-        searchUrl: `https://${mbSearchDomain}/search?q=`,
-        appScheme: null,
+        searchUrl: 'https://www.youtube.com/results?search_query=',
+        appScheme: 'youtube://',
       });
 
+      if (streamingProviders.length === 0) {
+        // Show discovery link if no providers enabled
+        streamingProviders.push({
+          id: 'discovery',
+          name: 'Explore All',
+          icon: 'search',
+          color: Colors.accentPurple,
+          url: 'https://fmhy.net/video#streaming-sites',
+        });
+      }
+
       setAvailableProviders(streamingProviders);
-      setShowPicker(true);
     } catch (e) {
       console.error('[Home] Failed to fetch providers:', e);
-      // Fallback to Explore screen
-      navigation.navigate('Explore', { searchQuery: title, ts: Date.now() });
+    } finally {
+      setIsFetchingProviders(false);
     }
   };
 
@@ -416,7 +514,7 @@ const HomeScreen = ({ navigation }) => {
       title,
       tmdbId,
       mediaType,
-      movieboxDomain,
+      provider.customDomain, // Use specific domain from provider object
       navigation
     );
 
@@ -454,9 +552,9 @@ const HomeScreen = ({ navigation }) => {
   };
 
   const MEDIA_TYPES = [
-    { id: 'all', name: 'All', icon: '🔥' },
-    { id: 'live', name: 'Live', icon: '🔴' },
-    { id: 'movies_series', name: 'Movies / Series', icon: '🎬' },
+    { id: 'all', name: 'All', icon: 'flash' },
+    { id: 'live', name: 'Live', icon: 'radio' },
+    { id: 'movies_series', name: 'Movies & TV', icon: 'film' },
   ];
 
   if (!hasKey) {
@@ -505,6 +603,34 @@ const HomeScreen = ({ navigation }) => {
             progressBackgroundColor={Colors.bgSecondary}
           />
         }>
+        {/* Header Row */}
+        <View style={styles.headerRow}>
+          <View style={styles.headerLeft}>
+            <Image
+              source={require('../assets/images/logo.png')}
+              style={styles.headerLogo}
+              resizeMode="contain"
+            />
+            <Text style={styles.headerTitle}>STREAMDECK</Text>
+          </View>
+          <View style={styles.headerRight}>
+            <TouchableOpacity 
+              style={styles.headerIconCircle}
+              onPress={() => navigation.navigate('Explore')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="search" size={20} color={Colors.textPrimary} />
+            </TouchableOpacity>
+            <TouchableOpacity 
+              style={styles.headerIconCircle}
+              onPress={() => navigation.navigate('Settings')}
+              activeOpacity={0.7}
+            >
+              <Ionicons name="settings-sharp" size={20} color={Colors.textPrimary} />
+            </TouchableOpacity>
+          </View>
+        </View>
+
         {/* Category Filter */}
         <ScrollView
           horizontal
@@ -512,23 +638,12 @@ const HomeScreen = ({ navigation }) => {
           style={styles.categoryScroll}
           contentContainerStyle={styles.categoryContent}>
           {MEDIA_TYPES.map(cat => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[
-                styles.categoryChip,
-                selectedMediaType === cat.id && styles.categoryChipActive,
-              ]}
-              onPress={() => setSelectedMediaType(cat.id)}
-              activeOpacity={0.7}>
-              <Text style={styles.categoryIcon}>{cat.icon}</Text>
-              <Text
-                style={[
-                  styles.categoryText,
-                  selectedMediaType === cat.id && styles.categoryTextActive,
-                ]}>
-                {cat.name}
-              </Text>
-            </TouchableOpacity>
+            <CategoryChip 
+              key={cat.id} 
+              cat={cat} 
+              selectedMediaType={selectedMediaType} 
+              setSelectedMediaType={setSelectedMediaType} 
+            />
           ))}
         </ScrollView>
 
@@ -538,6 +653,7 @@ const HomeScreen = ({ navigation }) => {
           onPlay={handlePlayPress}
           onAddToList={handleAddToLibrary}
           paused={showPicker}
+          watchlist={watchlist}
         />
 
         {/* Continue Watching */}
@@ -594,27 +710,34 @@ const HomeScreen = ({ navigation }) => {
             </View>
 
             <View style={styles.providerGrid}>
-              {availableProviders.map(provider => (
-                <TouchableOpacity
-                  key={provider.id}
-                  style={styles.providerItem}
-                  onPress={() => handleSelectProvider(provider)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
-                    {provider.logoUrl ? (
-                      <Image
-                        source={{ uri: provider.logoUrl }}
-                        style={styles.providerLogo}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <Text style={styles.providerIconText}>{provider.icon}</Text>
-                    )}
-                  </View>
-                  <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                </TouchableOpacity>
-              ))}
+              {isFetchingProviders ? (
+                <View style={styles.modalLoading}>
+                  <ActivityIndicator size="small" color={Colors.accentPurple} />
+                  <Text style={styles.modalLoadingText}>Curating streams...</Text>
+                </View>
+              ) : (
+                availableProviders.map(provider => (
+                  <TouchableOpacity
+                    key={provider.id}
+                    style={styles.providerItem}
+                    onPress={() => handleSelectProvider(provider)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? 'rgba(255,255,255,0.05)' : provider.color }]}>
+                      {provider.logoUrl ? (
+                        <Image
+                          source={{ uri: provider.logoUrl }}
+                          style={styles.providerLogo}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Icon name={provider.icon} size={32} color="#fff" />
+                      )}
+                    </View>
+                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
             </View>
 
             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
@@ -636,7 +759,7 @@ const HomeScreen = ({ navigation }) => {
             <View style={styles.modalHeader}>
               <View style={styles.modalHandle} />
               <View style={styles.warningIconBox}>
-                <Text style={styles.warningIcon}>🗺️</Text>
+                <Ionicons name="map" size={32} color={Colors.accentPurple} />
               </View>
               <Text style={styles.modalTitle}>Source Not Verified</Text>
               <Text style={styles.modalSubtitle}>We don't have a direct path for this source yet.</Text>
@@ -839,40 +962,105 @@ const styles = StyleSheet.create({
     height: 100,
   },
   categoryScroll: {
-    marginBottom: Spacing.lg,
-    marginTop: -Spacing.md,
+    marginBottom: Spacing.xl,
+  },
+  headerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: Spacing.xl,
+  },
+  headerLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  headerLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    marginRight: 10,
+  },
+  headerTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: Colors.textPrimary,
+    letterSpacing: 1.5,
+    textTransform: 'uppercase',
+  },
+  headerRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  headerIconCircle: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.06)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  headerIconText: {
+    fontSize: 18,
   },
   categoryContent: {
     paddingHorizontal: Spacing.xl,
     gap: Spacing.sm,
   },
+  categoryChipContainer: {
+    marginRight: 10,
+  },
   categoryChip: {
-    flexDirection: 'row',
+    padding: 1.5, // Space for the glowing border
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    overflow: 'hidden',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    gap: 6,
-    marginRight: Spacing.sm,
   },
   categoryChipActive: {
-    backgroundColor: 'rgba(157, 78, 221, 0.2)',
-    borderColor: 'rgba(157, 78, 221, 0.5)',
+    backgroundColor: '#000', // Black background for the inner content to pop
+    shadowColor: '#8b5cf6',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 10,
+    elevation: 8,
   },
-  categoryIcon: {
-    fontSize: 14,
+  categoryChipInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    width: '100%',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  categoryChipInnerActive: {
+    backgroundColor: '#000',
+  },
+  glowBorder: {
+    position: 'absolute',
+    width: 200, // Large enough to cover rotation
+    height: 200,
+    top: -75,
+    left: -50,
   },
   categoryText: {
-    fontSize: 13,
-    color: 'rgba(255,255,255,0.5)',
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: 14,
     fontWeight: '700',
+    letterSpacing: 0.2,
   },
   categoryTextActive: {
-    color: '#D4A5FF',
+    color: '#fff',
   },
+  categoryScroll: {
+    marginVertical: 12,
+  },
+
   // ── Modal: smooth fade overlay ──────────────────────
   modalOverlay: {
     flex: 1,
@@ -903,11 +1091,12 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
   },
   modalHandle: {
-    width: 36,
+    width: 40,
     height: 4,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: Colors.accentPurple,
     borderRadius: 2,
     marginBottom: 20,
+    opacity: 0.8,
   },
   modalTitle: {
     fontSize: 22,
@@ -1038,6 +1227,31 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  noProvidersBox: {
+    width: '100%',
+    padding: Spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    marginTop: 8,
+  },
+  noProvidersText: {
+    color: 'rgba(255,255,255,0.6)', // High-contrast silver-muted
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+    fontWeight: '600',
+  },
+  modalLoading: {
+    padding: 30,
+    alignItems: 'center',
+    width: '100%',
+  },
+  modalLoadingText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 12,
   },
   cancelBtn: {
     backgroundColor: 'rgba(255,255,255,0.05)',

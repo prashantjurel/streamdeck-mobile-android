@@ -17,6 +17,7 @@ import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {useFocusEffect} from '@react-navigation/native';
 import {fetchMovieRecommendations, MOVIE_GENRES} from '../services/movieAdventure';
 import {fetchWatchProviders} from '../services/tmdb';
+import {loadSettings} from '../utils/storage';
 import AdventureStack from '../components/AdventureStack';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -28,19 +29,55 @@ const SAVED_ADVENTURES_KEY = 'streamdeck_mobile_adventure_saved';
 const AdventureScreen = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
   const { hasKey, requestKey } = useApi();
+  
+  // All State Hooks (Contiguous Block)
   const [cards, setCards] = useState([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingPrefs, setLoadingPrefs] = useState(true);
   const [prefs, setPrefs] = useState(null);
   const [page, setPage] = useState(1);
-  const stackRef = useRef(null);
-
-  // Watch Providers Modal State
   const [showPicker, setShowPicker] = useState(false);
+  const [isFetchingProviders, setIsFetchingProviders] = useState(false);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [selectedMovie, setSelectedMovie] = useState(null);
-  const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
+
+  // Refs
+  const stackRef = useRef(null);
+
+  // Fallback padding for devices that report 0 insets
+  const topPadding = insets.top || StatusBar.currentHeight || 0;
+
+  // ELITE HEADER
+  const renderHeader = () => (
+    <View style={[styles.adventureHeader, { top: topPadding + 10 }]}>
+      <View style={{ flex: 1 }} /> {/* Adaptive left spacer */}
+      
+      <View style={styles.headerTitleBox}>
+        <Text style={styles.headerTitle}>Adventure</Text>
+        <Text style={styles.headerSubtitle}>Personalized Discovery</Text>
+      </View>
+
+      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+        {prefs && (
+          <TouchableOpacity 
+            style={styles.vibeBtn}
+            onPress={() => navigation.navigate('AdventurePreferences')}
+            activeOpacity={0.7}
+          >
+            <LinearGradient
+              colors={['rgba(139, 92, 246, 0.4)', 'rgba(217, 70, 239, 0.4)']}
+              start={{x: 0, y: 0}}
+              end={{x: 1, y: 0}}
+              style={styles.vibeGradient}
+            >
+              <Text style={styles.editPrefs}>Change Vibe</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
+      </View>
+    </View>
+  );
 
   const routeGenreIds = route.params?.genreIds;
   const isMoodBased = route.params?.isMoodBased;
@@ -58,8 +95,16 @@ const AdventureScreen = ({navigation, route}) => {
       setLoadingPrefs(true);
       
       // 1. ABSOLUTE PRIORITY: Check AsyncStorage first.
-      // If the user hit 'Reset' in settings, this will be null.
       const saved = await AsyncStorage.getItem('streamdeck_adventure_prefs');
+      
+      // Load global settings (like moviebox domain)
+      const settingsRaw = await AsyncStorage.getItem('streamdeck_settings');
+      if (settingsRaw) {
+        const settings = JSON.parse(settingsRaw);
+        if (settings.movieboxDomain) {
+          setMovieboxDomain(settings.movieboxDomain);
+        }
+      }
       
       if (!saved) {
         // If prefs were deleted (Reset), clear local state and redirect IMMEDIATELY
@@ -143,6 +188,9 @@ const AdventureScreen = ({navigation, route}) => {
 
   const handleSwipeUp = async (card) => {
     setSelectedMovie(card);
+    setAvailableProviders([]); // Clear previous
+    setIsFetchingProviders(true);
+    setShowPicker(true); // OPEN MODAL IMMEDIATELY for instant feedback
     
     try {
       const providersData = await fetchWatchProviders(card.id, 'movie');
@@ -164,24 +212,61 @@ const AdventureScreen = ({navigation, route}) => {
         });
       }
 
-      const mbDomain = movieboxDomain.trim();
-      const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+      // Always Add Enabled MovieBox Sources as Primary Hubs
+      const settings = await loadSettings();
+      const movieboxSources = settings.movieboxSources || [];
+      
+      (movieboxSources || [])
+        .filter(s => s.enabled)
+        .forEach((s, idx) => {
+          const mbDomain = s.url.trim();
+          const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+
+          // Personality Engine
+          const searchSource = (s.name || mbSearchDomain).toLowerCase();
+          let icon = 'movie-open-play';
+          if (searchSource.includes('tv') || searchSource.includes('live')) icon = 'television-play';
+          else if (searchSource.includes('flix') || searchSource.includes('cine')) icon = 'video-box';
+          else if (searchSource.includes('box')) icon = 'play-box-multiple';
+          else {
+            const icons = ['movie-open-play', 'video-box', 'play-box-multiple', 'movie-filter'];
+            icon = icons[(s.name || mbSearchDomain).length % icons.length];
+          }
+
+          const colors = ['#E21D48', '#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#14b8a6', '#6366f1'];
+          let hash = 0;
+          const name = s.name || mbSearchDomain;
+          for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+          const color = colors[Math.abs(hash) % colors.length];
+
+          streamingProviders.push({
+            id: `moviebox_${idx}`,
+            name: s.name || mbSearchDomain, // Show specific domain name
+            icon: icon,
+            color: color,
+            logoUrl: null,
+            searchUrl: `https://${mbSearchDomain}/search?q=`,
+            appScheme: null,
+            customDomain: mbDomain,
+          });
+        });
+
+      // Always Add YouTube as Primary Hub
       streamingProviders.push({
-        id: 'moviebox',
-        name: 'MovieBox',
-        icon: '🍿',
-        color: '#E21D48',
+        id: 'youtube',
+        name: 'YouTube',
+        icon: 'youtube', // Official Brand Logo
+        color: '#FF0000',
         logoUrl: null,
-        searchUrl: `https://${mbSearchDomain}/search?q=`,
-        appScheme: null,
+        searchUrl: 'https://www.youtube.com/results?search_query=',
+        appScheme: 'youtube://',
       });
 
       setAvailableProviders(streamingProviders);
-      setShowPicker(true);
     } catch (e) {
       console.error('[Adventure] Failed to fetch providers:', e);
-      // Fallback
-      navigation.navigate('Explore', {searchQuery: card.title, ts: Date.now()});
+    } finally {
+      setIsFetchingProviders(false);
     }
   };
 
@@ -215,63 +300,38 @@ const AdventureScreen = ({navigation, route}) => {
     else if (direction === 'up') handleSwipeUp(card);
   };
 
-  const topPadding = insets.top || StatusBar.currentHeight || 0;
-
-  if (!hasKey) {
-    return (
-      <View style={[styles.screen, { paddingTop: topPadding, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }]}>
-        <Text style={{ fontSize: 40, marginBottom: 16 }}>🔑</Text>
-        <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
-          One-Time Setup Required
-        </Text>
-        <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
-          Adventure uses TMDB to discover and recommend movies based on your taste. This is a one-time setup, once saved, you won't be asked again.
-        </Text>
-        <TouchableOpacity
-          style={{ borderRadius: 12, overflow: 'hidden' }}
-          onPress={requestKey}
-        >
-          <LinearGradient
-            colors={[Colors.accentPurple, Colors.accentPink]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={{ paddingVertical: 14, paddingHorizontal: 28 }}
-          >
-            <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' }}>Set Up API Key</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
-      <StatusBar barStyle="light-content" backgroundColor={Colors.bgPrimary} />
+      <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
-      <View style={[styles.header, {paddingTop: (insets.top || StatusBar.currentHeight || 0) + Spacing.md}]}>
-        <Text style={styles.title}>Adventure</Text>
-        <View style={styles.badgeRow}>
-           <Text style={styles.subtitle}>Movie Discovery</Text>
-           {prefs && (
-             <TouchableOpacity 
-               style={styles.vibeBtn}
-               onPress={() => navigation.navigate('AdventurePreferences')}
-               activeOpacity={0.7}
-             >
-               <LinearGradient
-                 colors={['rgba(139, 92, 246, 0.3)', 'rgba(217, 70, 239, 0.3)']}
-                 start={{x: 0, y: 0}}
-                 end={{x: 1, y: 0}}
-                 style={styles.vibeGradient}
-               >
-                 <Text style={styles.editPrefs}>Change Vibe</Text>
-               </LinearGradient>
-             </TouchableOpacity>
-           )}
+      {renderHeader()}
+      
+      {!hasKey ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
+          <Text style={{ fontSize: 40, marginBottom: 16 }}>🔑</Text>
+          <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
+            One-Time Setup Required
+          </Text>
+          <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
+            Adventure uses TMDB to discover and recommend movies based on your taste. This is a one-time setup, once saved, you won't be asked again.
+          </Text>
+          <TouchableOpacity
+            style={{ borderRadius: 12, overflow: 'hidden' }}
+            onPress={requestKey}
+          >
+            <LinearGradient
+              colors={[Colors.accentPurple, Colors.accentPink]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={{ paddingVertical: 14, paddingHorizontal: 28 }}
+            >
+              <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' }}>Set Up API Key</Text>
+            </LinearGradient>
+          </TouchableOpacity>
         </View>
-      </View>
-      
-      <View style={styles.container}>
+      ) : (
+        <>
+          <View style={styles.container}>
         {(loading || loadingPrefs) && cards.length === 0 ? (
           <View style={styles.center}>
             <ActivityIndicator size="large" color={Colors.accentPurple} />
@@ -300,9 +360,9 @@ const AdventureScreen = ({navigation, route}) => {
         <TouchableOpacity 
           style={[styles.btn, styles.skipBtn]} 
           onPress={() => stackRef.current?.swipeLeft()}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
-          <Icon name="close" size={26} color="#F43F5E" />
+          <Icon name="close" size={28} color="#FF3366" />
         </TouchableOpacity>
 
         <TouchableOpacity 
@@ -310,26 +370,27 @@ const AdventureScreen = ({navigation, route}) => {
           activeOpacity={0.8}
         >
           <LinearGradient
-            colors={['#8B5CF6', '#D946EF']}
+            colors={[Colors.accentPurple, Colors.accentPink]}
             start={{x: 0, y: 0}}
             end={{x: 1, y: 0}}
             style={[styles.btn, styles.exploreBtn]}
           >
-            <Icon name="play" size={28} color="#fff" />
+            <Icon name="play" size={22} color="#fff" />
             <Text style={styles.exploreText}>Watch Now</Text>
           </LinearGradient>
         </TouchableOpacity>
-
         <TouchableOpacity 
           style={[styles.btn, styles.saveBtn]} 
           onPress={() => stackRef.current?.swipeRight()}
-          activeOpacity={0.8}
+          activeOpacity={0.7}
         >
-          <Icon name="bookmark-outline" size={26} color="#10B981" />
+          <Icon name="bookmark-outline" size={28} color="#00FF99" />
         </TouchableOpacity>
       </View>
+    </>
+  )}
 
-      {/* Watch Providers Modal */}
+  {/* Watch Providers Modal */}
       <Modal
         visible={showPicker}
         transparent
@@ -344,29 +405,42 @@ const AdventureScreen = ({navigation, route}) => {
                 <Text style={styles.modalSubtitle}>Select where to stream {selectedMovie?.title}</Text>
              </View>
              
-             <View style={styles.providerGrid}>
-                {availableProviders.map(provider => (
-                  <TouchableOpacity 
-                    key={provider.id} 
-                    style={styles.providerItem}
-                    onPress={() => handleSelectProvider(provider)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
-                      {provider.logoUrl ? (
-                        <Image
-                          source={{uri: provider.logoUrl}}
-                          style={styles.providerLogo}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Text style={styles.providerIconText}>{provider.icon}</Text>
-                      )}
-                    </View>
-                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                  </TouchableOpacity>
-                ))}
-             </View>
+              <View style={styles.providerGrid}>
+                {isFetchingProviders ? (
+                  <View style={styles.modalLoading}>
+                    <ActivityIndicator size="small" color={Colors.accentPurple} />
+                    <Text style={styles.modalLoadingText}>Curating streams...</Text>
+                  </View>
+                ) : (
+                  availableProviders.map(provider => (
+                    <TouchableOpacity 
+                      key={provider.id} 
+                      style={styles.providerItem}
+                      onPress={() => handleSelectProvider(provider)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
+                        {provider.logoUrl ? (
+                          <Image
+                            source={{uri: provider.logoUrl}}
+                            style={styles.providerLogo}
+                            resizeMode="contain"
+                          />
+                        ) : (
+                          <Icon name={provider.icon} size={32} color="#fff" />
+                        )}
+                      </View>
+                      <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                    </TouchableOpacity>
+                  ))
+                )}
+                
+                {!isFetchingProviders && availableProviders.length > 0 && availableProviders.every(p => p.id === 'moviebox' || p.id === 'youtube') && (
+                  <View style={styles.noProvidersBox}>
+                    <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing MovieBox and YouTube as fallbacks.</Text>
+                  </View>
+                )}
+              </View>
 
              <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
                 <Text style={styles.closeModalText}>Cancel</Text>
@@ -387,6 +461,37 @@ const styles = StyleSheet.create({
   vibeBtn: { borderRadius: 12, overflow: 'hidden' },
   vibeGradient: { paddingHorizontal: 10, paddingVertical: 5 },
   editPrefs: { fontSize: 11, color: '#fff', fontWeight: '800', textTransform: 'uppercase' },
+  adventureHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    zIndex: 100,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  headerTitleBox: {
+    alignItems: 'center',
+  },
+  headerTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  headerSubtitle: {
+    color: Colors.accentPink,
+    fontSize: 10,
+    fontWeight: 'bold',
+    textTransform: 'uppercase',
+  },
   container: { 
     flex: 1, 
     justifyContent: 'center', // This ensures equal vertical gaps
@@ -415,23 +520,42 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
   },
   skipBtn: { 
-    width: 60,
-    borderColor: 'rgba(244, 63, 94, 0.3)', 
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderColor: '#F43F5E', 
+    borderWidth: 2,
+    backgroundColor: '#0F0F14',
+    shadowColor: '#F43F5E',
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.6,
+    shadowRadius: 15,
+    elevation: 12,
   },
   saveBtn: { 
-    width: 60,
-    borderColor: 'rgba(16, 185, 129, 0.3)', 
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    borderColor: '#10B981', 
+    borderWidth: 2,
+    backgroundColor: '#0F0F14',
+    shadowColor: '#10B981',
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.6,
+    shadowRadius: 15,
+    elevation: 12,
   },
   exploreBtn: { 
     flexDirection: 'row',
-    paddingHorizontal: 28,
-    borderWidth: 0,
-    gap: 8,
-    elevation: 8,
-    shadowColor: '#8B5CF6',
-    shadowOffset: {width: 0, height: 4},
-    shadowOpacity: 0.4,
-    shadowRadius: 10,
+    paddingHorizontal: 36,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    gap: 10,
+    elevation: 15,
+    shadowColor: Colors.accentPurple,
+    shadowOffset: {width: 0, height: 0},
+    shadowOpacity: 0.6,
+    shadowRadius: 20,
   },
   exploreText: {
     color: '#fff',
@@ -455,8 +579,32 @@ const styles = StyleSheet.create({
   providerLogo: { width: 44, height: 44, borderRadius: 8 },
   providerIconText: { fontSize: 28, fontWeight: '900', color: '#fff' },
   providerName: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.75)', textAlign: 'center' },
+  modalLoading: {
+    padding: 30,
+    alignItems: 'center',
+    width: '100%',
+  },
+  modalLoadingText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 13,
+    fontWeight: '600',
+    marginTop: 12,
+  },
   closeModalBtn: { marginTop: 8, paddingVertical: 14, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16 },
   closeModalText: { fontSize: 15, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
+  noProvidersBox: {
+    width: '100%',
+    padding: Spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    marginTop: -4,
+  },
+  noProvidersText: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    textAlign: 'center',
+    lineHeight: 18,
+  },
 });
 
 export default AdventureScreen;

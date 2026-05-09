@@ -25,6 +25,7 @@ import Animated, {
 import LinearGradient from 'react-native-linear-gradient';
 import { Colors, Spacing } from '../theme/colors';
 import { getImageUrl } from '../services/tmdb';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const CARD_HEIGHT = 520;
 const ANIM_DURATION = 400;
@@ -81,7 +82,7 @@ const TeamLogo = memo(({uri, initials}) => {
 // HeroCard — Reusable poster card for movies, series, live sports
 // The card IS the poster. Content bottom-aligned over gradient.
 // ═══════════════════════════════════════════════════════════
-const HeroCard = memo(({ movie, onPlay, onAddToList }) => {
+const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
   const backdropUrl = getImageUrl(movie.backdrop_path, 'original');
   const title = movie.title || movie.name || 'Unknown';
   const isSports = movie.isSports;
@@ -213,10 +214,14 @@ const HeroCard = memo(({ movie, onPlay, onAddToList }) => {
         <View style={styles.actionCol}>
           {!isSports && (
             <TouchableOpacity
-              style={styles.addBtn}
+              style={[styles.addBtn, isSaved && styles.addBtnActive]}
               onPress={() => onAddToList(movie)}
               activeOpacity={0.7}>
-              <Text style={styles.addIcon}>+</Text>
+              <Ionicons 
+                name={isSaved ? "checkmark" : "add"} 
+                size={24} 
+                color="#fff" 
+              />
             </TouchableOpacity>
           )}
           <TouchableOpacity
@@ -234,7 +239,7 @@ const HeroCard = memo(({ movie, onPlay, onAddToList }) => {
 // ═══════════════════════════════════════════════════════════
 // StackedCard — RIGHT-side-peeking animated card in the stack
 // ═══════════════════════════════════════════════════════════
-const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList, screenWidth }) => {
+const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList, screenWidth, isSaved }) => {
   const animStyle = useAnimatedStyle(() => {
     // ── Circular Distance Calculation ──
     // This ensures that even if animIndex is 10 and we have 5 movies,
@@ -280,7 +285,7 @@ const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList,
 
   return (
     <Animated.View style={[styles.stackCard, animStyle]}>
-      <HeroCard movie={movie} onPlay={onPlay} onAddToList={onAddToList} />
+      <HeroCard movie={movie} onPlay={onPlay} onAddToList={onAddToList} isSaved={isSaved} />
     </Animated.View>
   );
 });
@@ -288,7 +293,7 @@ const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList,
 // ═══════════════════════════════════════════════════════════
 // HeroSpotlight — The stacked carousel container
 // ═══════════════════════════════════════════════════════════
-const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => {
+const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watchlist = [] }) => {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
 
   const [activeIndex, setActiveIndex] = useState(0);
@@ -362,9 +367,9 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => 
         
         let targetIdx = activeRef.current;
 
-        if (g.dx < -dragThreshold || velocity < -0.5) {
+        if (g.dx < -dragThreshold || velocity < -0.3) {
           targetIdx = activeRef.current + 1;
-        } else if (g.dx > dragThreshold || velocity > 0.5) {
+        } else if (g.dx > dragThreshold || velocity > 0.3) {
           targetIdx = activeRef.current - 1;
         }
 
@@ -392,6 +397,7 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false }) => 
             onPlay={onPlay}
             onAddToList={onAddToList}
             screenWidth={SCREEN_WIDTH}
+            isSaved={watchlist.some(m => m.id === movie.id)}
           />
         ))}
       </View>
@@ -624,6 +630,11 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255,255,255,0.45)',
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+  },
+  addBtnActive: {
+    backgroundColor: Colors.accentPurple,
+    borderColor: Colors.accentPurple,
   },
   addIcon: {
     color: '#fff',

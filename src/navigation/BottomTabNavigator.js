@@ -14,10 +14,21 @@ import AdventureScreen from '../screens/AdventureScreen';
 import AdventurePreferencesScreen from '../screens/AdventurePreferencesScreen';
 import AdventureQuestionsScreen from '../screens/AdventureQuestionsScreen';
 import SettingsScreen from '../screens/SettingsScreen';
+import SourceManagerScreen from '../screens/SourceManagerScreen';
 import WebViewScreen from '../screens/WebViewScreen';
 
 const Tab = createBottomTabNavigator();
 const Stack = createNativeStackNavigator();
+
+// Home Stack to keep tabs visible during search
+const HomeStack = () => {
+  return (
+    <Stack.Navigator screenOptions={{headerShown: false}}>
+      <Stack.Screen name="HomeMain" component={HomeScreen} />
+      <Stack.Screen name="Explore" component={ExploreScreen} />
+    </Stack.Navigator>
+  );
+};
 
 // Adventure Stack to keep tabs visible during preferences
 const AdventureStack = () => {
@@ -80,13 +91,8 @@ const TabNavigator = () => {
       })}>
       <Tab.Screen
         name="Home"
-        component={HomeScreen}
+        component={HomeStack}
         options={{tabBarLabel: 'Home'}}
-      />
-      <Tab.Screen
-        name="Explore"
-        component={ExploreScreen}
-        options={{tabBarLabel: 'Explore'}}
       />
       <Tab.Screen
         name="Adventure"
@@ -94,19 +100,9 @@ const TabNavigator = () => {
         options={{tabBarLabel: 'Adventure'}}
       />
       <Tab.Screen
-        name="Library"
-        component={LibraryScreen}
-        options={{tabBarLabel: 'Library'}}
-      />
-      <Tab.Screen
         name="LiveTV"
         component={LiveTVScreen}
         options={{tabBarLabel: 'Live TV'}}
-      />
-      <Tab.Screen
-        name="Settings"
-        component={SettingsScreen}
-        options={{tabBarLabel: 'Settings'}}
       />
     </Tab.Navigator>
   );
@@ -117,6 +113,9 @@ const RootNavigator = () => {
   return (
     <Stack.Navigator screenOptions={{headerShown: false}}>
       <Stack.Screen name="MainTabs" component={TabNavigator} />
+      <Stack.Screen name="Library" component={LibraryScreen} />
+      <Stack.Screen name="Settings" component={SettingsScreen} />
+      <Stack.Screen name="SourceManager" component={SourceManagerScreen} />
       <Stack.Screen
         name="WebView"
         component={WebViewScreen}

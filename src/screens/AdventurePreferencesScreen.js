@@ -12,8 +12,17 @@ import {
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {MOVIE_GENRES} from '../services/movieAdventure';
+
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const {width} = Dimensions.get('window');
 const COLUMN_WIDTH = (width - Spacing.xl * 2 - Spacing.md) / 2;
@@ -65,6 +74,21 @@ const AdventurePreferencesScreen = ({navigation}) => {
     } catch (e) {}
   };
 
+  // Animation for the rotating glow border
+  const rotation = useSharedValue(0);
+
+  useEffect(() => {
+    rotation.value = withRepeat(
+      withTiming(360, { duration: 3000, easing: Easing.linear }),
+      -1,
+      false
+    );
+  }, []);
+
+  const glowStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
+
   // Safe area handling
   const topPadding = insets.top || StatusBar.currentHeight || 0;
 
@@ -84,63 +108,95 @@ const AdventurePreferencesScreen = ({navigation}) => {
         </View>
 
         <View style={styles.grid}>
-          {MOVIE_GENRES.map(cat => (
-            <TouchableOpacity
-              key={cat.id}
-              activeOpacity={0.7}
-              onPress={() => toggleCategory(cat.id)}
-              style={[
-                styles.catCard,
-                selectedIds.includes(cat.id) && styles.catCardSelected,
-              ]}>
-              <View style={styles.catEmojiBox}>
-                <Text style={styles.catEmoji}>{cat.emoji}</Text>
-              </View>
-              <View style={styles.catInfo}>
-                <Text style={styles.catName}>{cat.name}</Text>
-                <View style={styles.checkRow}>
-                   <View style={[styles.checkbox, selectedIds.includes(cat.id) && styles.checkboxSelected]}>
-                     {selectedIds.includes(cat.id) && <Text style={styles.checkIcon}>✓</Text>}
-                   </View>
+          {MOVIE_GENRES.map(cat => {
+            const isSelected = selectedIds.includes(cat.id);
+            return (
+              <TouchableOpacity
+                key={cat.id}
+                activeOpacity={0.8}
+                onPress={() => toggleCategory(cat.id)}
+                style={[
+                  styles.catCard,
+                  isSelected && styles.catCardSelected,
+                ]}
+              >
+                {isSelected && (
+                  <LinearGradient
+                    colors={['rgba(139, 92, 246, 0.15)', 'rgba(236, 72, 153, 0.05)']}
+                    style={StyleSheet.absoluteFill}
+                  />
+                )}
+                <View style={[styles.catIconBox, isSelected && styles.catIconBoxActive]}>
+                  <Ionicons 
+                    name={cat.icon} 
+                    size={20} 
+                    color={isSelected ? '#fff' : 'rgba(255,255,255,0.4)'} 
+                  />
                 </View>
-              </View>
-            </TouchableOpacity>
-          ))}
+                <View style={styles.catInfo}>
+                  <Text style={[styles.catName, isSelected && styles.catNameActive]}>
+                    {cat.name}
+                  </Text>
+                </View>
+              </TouchableOpacity>
+            );
+          })}
         </View>
       </ScrollView>
 
       {/* Premium Floating Action Bar */}
-      <View style={[styles.floatingBottomBar, { bottom: insets.bottom + 80 }]}>
-        <View style={styles.bottomBarContent}>
+      <View style={[styles.floatingBottomBar, { bottom: insets.bottom + 140 }]}>
+        <View style={styles.actionRow}>
+          {/* Secondary Action: Select All */}
           <TouchableOpacity 
-            style={styles.secondaryActionBtn} 
+            style={[
+              styles.styleButton, 
+              selectedIds.length === MOVIE_GENRES.length && styles.styleButtonActive
+            ]} 
             onPress={toggleAll}
             activeOpacity={0.7}
           >
-            <Text style={styles.secondaryActionText}>
-              {selectedIds.length === MOVIE_GENRES.length ? 'Clear Selection' : 'Select All'}
+            <Ionicons 
+              name={selectedIds.length === MOVIE_GENRES.length ? 'close-circle-outline' : 'infinite-outline'} 
+              size={20} 
+              color={selectedIds.length === MOVIE_GENRES.length ? '#fff' : 'rgba(255, 255, 255, 0.6)'} 
+            />
+            <Text style={[
+              styles.styleButtonText,
+              selectedIds.length === MOVIE_GENRES.length && styles.styleButtonTextActive
+            ]}>
+              {selectedIds.length === MOVIE_GENRES.length ? 'Clear' : 'All'}
             </Text>
           </TouchableOpacity>
 
+          {/* Primary Action: Questions/Explore */}
           <TouchableOpacity 
-            style={styles.primaryActionBtn} 
+            style={[
+              styles.styleButton, 
+              styles.primaryButtonActive,
+              { flex: 1 } 
+            ]} 
             onPress={handleStart}
             activeOpacity={0.8}
           >
             <LinearGradient
-              colors={selectedIds.length === 0 ? ['#F59E0B', '#EF4444'] : ['#8B5CF6', '#D946EF']}
-              start={{x: 0, y: 0}}
-              end={{x: 1, y: 1}}
-              style={styles.primaryGradient}
-            >
-            <Text style={styles.primaryActionText}>
-              {selectedIds.length === MOVIE_GENRES.length 
-                ? 'Mix Everything! 🍿' 
-                : selectedIds.length > 0 
-                  ? `Explore ${selectedIds.length} Genres` 
-                  : 'Ask Me Questions 🤔'}
+              colors={[Colors.accentPurple, Colors.accentPink]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={StyleSheet.absoluteFill}
+            />
+            <Ionicons 
+              name={selectedIds.length === 0 ? 'sparkles' : 'compass-outline'} 
+              size={18} 
+              color="#fff" 
+            />
+            <Text style={[styles.styleButtonText, styles.styleButtonTextActive]}>
+              {selectedIds.length === 0 
+                ? 'Help Me Choose' 
+                : selectedIds.length === MOVIE_GENRES.length
+                  ? 'Start Adventure'
+                  : `Adventure (${selectedIds.length})`}
             </Text>
-            </LinearGradient>
           </TouchableOpacity>
         </View>
       </View>
@@ -155,7 +211,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
-    paddingBottom: 280, // Massive padding to ensure categories aren't hidden behind buttons
+    paddingBottom: 240, 
   },
   header: {
     marginBottom: Spacing.xxl,
@@ -165,11 +221,13 @@ const styles = StyleSheet.create({
     fontWeight: '900',
     color: Colors.textPrimary,
     marginBottom: 8,
+    letterSpacing: -0.5,
   },
   subtitle: {
     fontSize: FontSizes.md,
-    color: Colors.textMuted,
+    color: 'rgba(255,255,255,0.45)',
     lineHeight: 22,
+    fontWeight: '600',
   },
   grid: {
     flexDirection: 'row',
@@ -178,61 +236,61 @@ const styles = StyleSheet.create({
   },
   catCard: {
     width: COLUMN_WIDTH,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    padding: Spacing.md,
-    marginBottom: Spacing.md,
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderRadius: 12,
+    padding: 10,
+    height: 52, 
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: Colors.borderSubtle,
+    borderColor: 'rgba(255,255,255,0.06)',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    overflow: 'hidden',
   },
   catCardSelected: {
-    borderColor: Colors.accentPurple,
-    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    borderColor: 'rgba(139, 92, 246, 0.5)',
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
   },
-  catEmojiBox: {
-    width: 44,
-    height: 44,
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: BorderRadius.md,
+  catIconBox: {
+    width: 34,
+    height: 34,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 9,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
   },
-  catEmoji: {
-    fontSize: 24,
+  catIconBoxActive: {
+    backgroundColor: '#8b5cf6',
+    borderColor: '#a78bfa',
   },
   catInfo: {
     flex: 1,
   },
   catName: {
-    fontSize: 14,
-    fontWeight: '700',
-    color: Colors.textPrimary,
+    fontSize: 13,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.4)',
+    letterSpacing: 0.1,
   },
-  checkRow: {
-    marginTop: 4,
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
+  catNameActive: {
+    color: '#fff',
+    fontWeight: '800',
   },
   checkbox: {
     width: 18,
     height: 18,
-    borderWidth: 2,
-    borderColor: 'rgba(255,255,255,0.2)',
-    borderRadius: 4,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.15)',
+    borderRadius: 5,
     justifyContent: 'center',
     alignItems: 'center',
   },
   checkboxSelected: {
     backgroundColor: Colors.accentPurple,
     borderColor: Colors.accentPurple,
-  },
-  checkIcon: {
-    color: '#fff',
-    fontSize: 10,
-    fontWeight: '900',
   },
   floatingBottomBar: {
     position: 'absolute',
@@ -241,55 +299,47 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingHorizontal: Spacing.xl,
   },
-  bottomBarContent: {
+  actionRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(20, 20, 30, 0.95)',
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 40,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
-    gap: 12,
-    elevation: 20,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.5,
-    shadowRadius: 15,
+    gap: 10,
+    width: '100%',
   },
-  secondaryActionBtn: {
+  styleButton: {
+    flexDirection: 'row',
+    alignItems: 'center', // Vertical center
+    justifyContent: 'center', // Horizontal center
+    backgroundColor: 'rgba(25, 25, 30, 0.95)',
+    height: 46, // Standardized height
     paddingHorizontal: 20,
-    paddingVertical: 12,
+    borderRadius: 14,
+    gap: 8,
+    borderWidth: 1.5,
+    borderColor: 'transparent',
   },
-  secondaryActionText: {
-    color: 'rgba(255, 255, 255, 0.6)',
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 0.5,
+  styleButtonActive: {
+    borderColor: 'rgba(139, 92, 246, 0.4)',
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
   },
-  primaryActionBtn: {
-    minWidth: 160,
-    borderRadius: 30,
+  primaryButtonActive: {
+    borderColor: 'rgba(255, 255, 255, 0.2)',
     overflow: 'hidden',
-    shadowColor: '#8B5CF6',
+    elevation: 8,
+    shadowColor: Colors.accentPurple,
     shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
   },
-  primaryGradient: {
-    paddingHorizontal: 24,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  primaryActionText: {
-    color: '#fff',
+  styleButtonText: {
+    color: 'rgba(255, 255, 255, 0.6)',
     fontSize: 15,
-    fontWeight: '900',
-    letterSpacing: 0.3,
+    fontWeight: '800',
+    letterSpacing: 0.2,
+    includeFontPadding: false, // Prevents Android-specific vertical shift
+    textAlignVertical: 'center', // Centers text vertically
   },
-  btnDisabled: {
-    opacity: 0.6,
+  styleButtonTextActive: {
+    color: '#fff',
   },
 });
 

@@ -1,5 +1,6 @@
-// StreamDeck Mobile — AsyncStorage Helpers
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { pushToCloud } from '../services/sync';
+import { getCurrentUser } from '../services/auth';
 
 const KEYS = {
   CONTINUE_WATCHING: 'continue_watching',
@@ -74,6 +75,10 @@ export async function loadWatchlist() {
 export async function saveWatchlist(items) {
   try {
     await AsyncStorage.setItem(KEYS.WATCHLIST, JSON.stringify(items));
+    
+    // Background sync if user is logged in
+    const user = getCurrentUser();
+    if (user) pushToCloud(user.uid);
   } catch (e) {
     console.warn('[Storage] Failed to save watchlist:', e);
   }
@@ -137,7 +142,36 @@ export async function setTMDBHomeCache(region, global, local, netflix, prime) {
 export async function loadSettings() {
   try {
     const data = await AsyncStorage.getItem(KEYS.SETTINGS);
-    return data ? JSON.parse(data) : getDefaultSettings();
+    if (!data) return getDefaultSettings();
+    
+    let settings = JSON.parse(data);
+    
+    // Migration: movieboxDomain -> movieboxSources
+    if (settings.movieboxDomain && !settings.movieboxSources) {
+      settings.movieboxSources = [
+        { name: 'Primary', url: settings.movieboxDomain, enabled: true }
+      ];
+      delete settings.movieboxDomain;
+    }
+
+    // Migration: Ensure movieboxSources have name property
+    if (settings.movieboxSources) {
+      settings.movieboxSources = settings.movieboxSources.map(s => ({
+        ...s,
+        name: s.name || 'Source',
+        enabled: s.enabled !== undefined ? s.enabled : true
+      }));
+    }
+
+    // Ensure liveSportsProviders have enabled property
+    if (settings.liveSportsProviders) {
+      settings.liveSportsProviders = settings.liveSportsProviders.map(p => ({
+        ...p,
+        enabled: p.enabled !== undefined ? p.enabled : true
+      }));
+    }
+
+    return settings;
   } catch (e) {
     return getDefaultSettings();
   }
@@ -146,6 +180,10 @@ export async function loadSettings() {
 export async function saveSettings(settings) {
   try {
     await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
+    
+    // Background sync if user is logged in
+    const user = getCurrentUser();
+    if (user) pushToCloud(user.uid);
   } catch (e) {
     console.warn('[Storage] Failed to save settings:', e);
   }
@@ -154,10 +192,13 @@ export async function saveSettings(settings) {
 export function getDefaultSettings() {
   return {
     tmdbApiKey: '',
-    movieboxDomain: 'cineby.sc',
-    contentRegion: 'US', // Global default
+    movieboxSources: [
+      { name: 'Cineby', url: 'cineby.sc', enabled: true },
+      { name: 'MovieBox', url: 'moviebox.mov', enabled: false }
+    ],
+    contentRegion: 'US',
     liveSportsProviders: [
-      { name: 'SportsLiveToday', url: 'https://sportslivetoday.com' },
+      { name: 'SportsLiveToday', url: 'https://sportslivetoday.com', enabled: true },
     ],
   };
 }

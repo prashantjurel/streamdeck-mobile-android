@@ -90,3 +90,12 @@ tvos/
 
 # Exclude local test APKs
 *.apk
+
+# Firebase & Credentials
+android/app/google-services.json
+android/app/*.jks
+android/app/*.keystore
+!android/app/debug.keystore
+google-services.json
+*.keystore
+*.jks

@@ -10,6 +10,7 @@ import {
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const {width} = Dimensions.get('window');
 
@@ -18,50 +19,50 @@ const MOOD_FLOW = {
     id: 'mood',
     text: "How was your day today?",
     options: [
-      { id: 'stress', text: "Stressful, I need to laugh and unwind", emoji: "😅", next: 'light' },
-      { id: 'boring', text: "A bit boring, I need some excitement!", emoji: "🥱", next: 'action' },
-      { id: 'thought', text: "Great! I'm feeling thoughtful and deep", emoji: "🤔", next: 'deep' },
-      { id: 'chill', text: "Just chill. Open to anything", emoji: "😎", next: 'any' },
+      { id: 'stress', text: "Stressful, I need to laugh and unwind", icon: "cafe-outline", next: 'light' },
+      { id: 'boring', text: "A bit boring, I need some excitement!", icon: "flash-outline", next: 'action' },
+      { id: 'thought', text: "Great! I'm feeling thoughtful and deep", icon: "bulb-outline", next: 'deep' },
+      { id: 'chill', text: "Just chill. Open to anything", icon: "leaf-outline", next: 'any' },
     ]
   },
   light: {
     id: 'light',
     text: "What kind of humor are you in the mood for?",
     options: [
-      { text: "Pure silliness and slapstick", genres: [35, 10751], emoji: "🤡" },
-      { text: "Smart, witty dialogue", genres: [35, 18], emoji: "😏" },
-      { text: "Romantic and feel-good", genres: [35, 10749], emoji: "🥂" },
-      { text: "Animation and wonder", genres: [16, 14], emoji: "✨" },
+      { text: "Pure silliness and slapstick", genres: [35, 10751], icon: "color-palette-outline" },
+      { text: "Smart, witty dialogue", genres: [35, 18], icon: "glasses-outline" },
+      { text: "Romantic and feel-good", genres: [35, 10749], icon: "heart-outline" },
+      { text: "Animation and wonder", genres: [16, 14], icon: "sparkles-outline" },
     ]
   },
   action: {
     id: 'action',
     text: "Where should the adrenaline take you?",
     options: [
-      { text: "A high-stakes heist or crime", genres: [80, 53], emoji: "💰" },
-      { text: "Saving the world from chaos", genres: [28, 12], emoji: "💥" },
-      { text: "Deep space or the future", genres: [878, 12], emoji: "🚀" },
-      { text: "A gritty, realistic survival", genres: [53, 12], emoji: "🏔️" },
+      { text: "A high-stakes heist or crime", genres: [80, 53], icon: "cube-outline" },
+      { text: "Saving the world from chaos", genres: [28, 12], icon: "flame-outline" },
+      { text: "Deep space or the future", genres: [878, 12], icon: "planet-outline" },
+      { text: "A gritty, realistic survival", genres: [53, 12], icon: "compass-outline" },
     ]
   },
   deep: {
     id: 'deep',
     text: "What kind of story do you want to ponder?",
     options: [
-      { text: "A powerful human drama", genres: [18], emoji: "🎭" },
-      { text: "A fascinating true story", genres: [99, 36], emoji: "📜" },
-      { text: "A dark mystery or puzzle", genres: [9648, 80], emoji: "🔍" },
-      { text: "Something artistic and indie", genres: [18, 99], emoji: "🎨" },
+      { text: "A powerful human drama", genres: [18], icon: "people-outline" },
+      { text: "A fascinating true story", genres: [99, 36], icon: "book-outline" },
+      { text: "A dark mystery or puzzle", genres: [9648, 80], icon: "search-outline" },
+      { text: "Something artistic and indie", genres: [18, 99], icon: "brush-outline" },
     ]
   },
   any: {
     id: 'any',
     text: "If you could escape right now, where would you go?",
     options: [
-      { text: "A far-off galaxy", genres: [878], emoji: "🌌" },
-      { text: "A magical realm", genres: [14], emoji: "🧙" },
-      { text: "A spooky thriller", genres: [27, 53], emoji: "👻" },
-      { text: "A relaxing romantic trip", genres: [10749], emoji: "💖" },
+      { text: "A far-off galaxy", genres: [878], icon: "rocket-outline" },
+      { text: "A magical realm", genres: [14], icon: "color-wand-outline" },
+      { text: "A spooky thriller", genres: [27, 53], icon: "skull-outline" },
+      { text: "A relaxing romantic trip", genres: [10749], icon: "airplane-outline" },
     ]
   }
 };
@@ -108,7 +109,12 @@ const AdventureQuestionsScreen = ({navigation}) => {
       <View style={styles.progressContainer}>
         <Text style={styles.progressText}>Step {progress} of {stepCount}</Text>
         <View style={styles.progressBarBg}>
-          <View style={[styles.progressBarFill, { width: `${(progress / stepCount) * 100}%` }]} />
+          <LinearGradient
+            colors={[Colors.accentPurple, Colors.accentPink]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={[styles.progressBarFill, { width: `${(progress / stepCount) * 100}%` }]}
+          />
         </View>
       </View>
 
@@ -120,11 +126,14 @@ const AdventureQuestionsScreen = ({navigation}) => {
             <TouchableOpacity 
               key={index} 
               style={styles.optionCard}
-              activeOpacity={0.8}
+              activeOpacity={0.7}
               onPress={() => handleOptionPress(opt)}
             >
-              <Text style={styles.optionEmoji}>{opt.emoji}</Text>
+              <View style={styles.optionIconBox}>
+                <Ionicons name={opt.icon} size={22} color={Colors.accentPurple} />
+              </View>
               <Text style={styles.optionText}>{opt.text}</Text>
+              <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.1)" />
             </TouchableOpacity>
           ))}
         </View>
@@ -182,22 +191,30 @@ const styles = StyleSheet.create({
   optionCard: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: Colors.bgCard,
-    padding: Spacing.lg,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    padding: 16,
+    borderRadius: 16,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
-  optionEmoji: {
-    fontSize: 28,
-    marginRight: Spacing.md,
+  optionIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
   },
   optionText: {
     flex: 1,
     color: Colors.textPrimary,
-    fontSize: 16,
-    fontWeight: '600',
-    lineHeight: 22,
+    fontSize: 15,
+    fontWeight: '700',
+    lineHeight: 20,
+    letterSpacing: 0.1,
   },
 });
 

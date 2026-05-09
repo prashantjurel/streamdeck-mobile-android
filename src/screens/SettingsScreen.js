@@ -12,6 +12,7 @@ import {
   Switch,
   Linking,
   Image,
+  ActivityIndicator,
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -37,6 +38,9 @@ import Animated, {
   runOnJS,
 } from 'react-native-reanimated';
 import { useFocusEffect } from '@react-navigation/native';
+import { signInWithGoogle, signOut, onAuthStateChanged, configureGoogleSignIn } from '../services/auth';
+import { pullFromCloud, pushToCloud } from '../services/sync';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const REGIONS = [
   { code: 'IN', name: 'India', flag: '🇮🇳' },
@@ -46,17 +50,24 @@ const REGIONS = [
   { code: 'CA', name: 'Canada', flag: '🇨🇦' },
 ];
 
+const CollapsibleHeader = ({ title, sectionKey, isExpanded, onToggle }) => (
+  <TouchableOpacity 
+    style={styles.collapsibleHeader} 
+    onPress={() => onToggle(sectionKey)}
+    activeOpacity={0.7}
+  >
+    <Text style={styles.sectionLabel}>{title}</Text>
+    <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color={Colors.textMuted} />
+  </TouchableOpacity>
+);
+
 const SettingsScreen = ({ navigation }) => {
   const insets = useSafeAreaInsets();
   const [settings, setSettings] = useState(getDefaultSettings());
   const [apiKey, setApiKeyState] = useState('');
-  const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
-  const [contentRegion, setContentRegion] = useState('IN');
-  const [pingStatus, setPingStatus] = useState('idle');
-  const [newProviderName, setNewProviderName] = useState('');
-  const [newProviderUrl, setNewProviderUrl] = useState('');
-  const [sportsPingStatus, setSportsPingStatus] = useState('idle');
-  const [saved, setSaved] = useState(false);
+  const [sourceStatuses, setSourceStatuses] = useState({});
+  const [editingId, setEditingId] = useState(null); // Keep only for basic ref 
+  const [showSaved, setShowSaved] = useState(false);
   const [alertConfig, setAlertConfig] = useState({ 
     visible: false, 
     title: '', 
@@ -67,6 +78,8 @@ const SettingsScreen = ({ navigation }) => {
     cancelText: null,
     type: 'warning'
   });
+  const [user, setUser] = useState(null);
+  const [syncing, setSyncing] = useState(false);
 
   const showAlert = (title, message, onConfirm = null, confirmText = 'OK', onCancel = null, cancelText = null, type = 'warning') => {
     setAlertConfig({
@@ -88,7 +101,7 @@ const SettingsScreen = ({ navigation }) => {
   };
   const [showApiKey, setShowApiKey] = useState(false);
 
-  // Auto-scroll and flash
+  // Auto-scroll and flash refs
   const scrollRef = React.useRef(null);
   const movieboxY = React.useRef(0);
   const sportsY = React.useRef(0);
@@ -108,32 +121,42 @@ const SettingsScreen = ({ navigation }) => {
 
   const { saveKey, checkKey } = useApi();
 
+  const [expandedSections, setExpandedSections] = useState({
+    account: true,
+    personal: true,
+    tmdb: false,
+    region: false,
+    streaming: false,
+    sports: false,
+    data: false
+  });
+
+  const toggleSection = (key) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
   const bottomPadding = insets.bottom || 20;
 
-  useEffect(() => {
-    loadData();
-  }, []);
-
-  const loadData = async () => {
-    const s = await loadSettings();
-    setSettings(s);
-    setMovieboxDomain(s.movieboxDomain || 'moviebox.mov');
-    setContentRegion(s.contentRegion || 'IN');
-    const key = await getApiKey();
-    setApiKeyState(key === '4b7f91faba006196d244250a3f87ffce' ? '' : key);
-  };
-
+  // Auto-scroll and flash (moved Focus effect up to stabilize hook order)
   useFocusEffect(
     React.useCallback(() => {
+      // Reload settings whenever screen is focused (e.g. returning from Source Manager)
+      loadData();
+
       const { params } = navigation.getState().routes.find(r => r.name === 'Settings') || {};
       if (params?.highlightSection) {
         const section = params.highlightSection;
         setTimeout(() => {
           if (section === 'moviebox') {
+            setExpandedSections(prev => ({ ...prev, streaming: true }));
             scrollRef.current?.scrollTo({ y: movieboxY.current - 100, animated: true });
           } else if (section === 'sports') {
+            setExpandedSections(prev => ({ ...prev, sports: true }));
             scrollRef.current?.scrollTo({ y: sportsY.current - 100, animated: true });
           }
 
@@ -158,120 +181,106 @@ const SettingsScreen = ({ navigation }) => {
   );
 
   useEffect(() => {
-    if (!movieboxDomain) {
-      setPingStatus('idle');
-      return;
-    }
-
-    setPingStatus('testing');
-    const timer = setTimeout(async () => {
-      try {
-        let url = movieboxDomain.trim();
-        if (!/^https?:\/\//i.test(url)) {
-          url = `https://${url}`;
-        }
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-        await fetch(url, { method: 'HEAD', signal: controller.signal });
-        clearTimeout(timeoutId);
-        setPingStatus('success');
-      } catch (e) {
-        setPingStatus('error');
+    loadData();
+    configureGoogleSignIn();
+    
+    const unsubscribe = onAuthStateChanged(async (u) => {
+      setUser(u);
+      if (u) {
+        setSyncing(true);
+        await pullFromCloud(u.uid);
+        setSyncing(false);
       }
-    }, 800);
+    });
+    return unsubscribe;
+  }, []);
 
-    return () => clearTimeout(timer);
-  }, [movieboxDomain]);
-
+  // Auto-save Settings
   useEffect(() => {
-    if (!newProviderUrl) {
-      setSportsPingStatus('idle');
-      return;
-    }
-
-    setSportsPingStatus('testing');
     const timer = setTimeout(async () => {
-      try {
-        let url = newProviderUrl.trim();
-        if (!/^https?:\/\//i.test(url)) {
-          url = `https://${url}`;
-        }
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-        await fetch(url, { method: 'HEAD', signal: controller.signal });
-        clearTimeout(timeoutId);
-        setSportsPingStatus('success');
-      } catch (e) {
-        setSportsPingStatus('error');
+      if (settings) {
+        await saveSettings(settings);
+        if (user) pushToCloud(user.uid, settings);
+        setShowSaved(true);
+        setTimeout(() => setShowSaved(false), 1500);
       }
-    }, 800);
-
+    }, 1000);
     return () => clearTimeout(timer);
-  }, [newProviderUrl]);
+  }, [settings]);
 
-  const handleSave = async () => {
-    const newSettings = {
-      ...settings,
-      movieboxDomain,
-      contentRegion,
-    };
-    await saveSettings(newSettings);
-    const cleanKey = apiKey ? apiKey.replace(/\s+/g, '') : '';
-    if (cleanKey) {
-      try {
-        const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${cleanKey}`);
-        if (res.status === 401) {
-          showAlert('Invalid API Key', 'The TMDB API Key you entered is invalid. Please check and try again.', null, 'OK', null, null, 'error');
-          return;
+  // Auto-save API Key
+  useEffect(() => {
+    const timer = setTimeout(async () => {
+      if (apiKey !== undefined) {
+        const cleanKey = apiKey.trim();
+        await storageSaveApiKey(cleanKey);
+        // Silently update API context
+        if (cleanKey) {
+          try {
+            const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${cleanKey}`);
+            if (res.ok) {
+              // Valid key, we're good
+            }
+          } catch (e) {}
         }
-      } catch (e) {
-        // network issue, ignore validation and let them save
       }
-      await saveKey(cleanKey);
-    } else {
-      // If they cleared it, save empty string to storage and sync context
-      await storageSaveApiKey('');
-      await checkKey();
-    }
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    }, 2000);
+    return () => clearTimeout(timer);
+  }, [apiKey]);
+
+  const loadData = async () => {
+    const s = await loadSettings();
+    setSettings(s);
+    const key = await getApiKey();
+    setApiKeyState(key === '4b7f91faba006196d244250a3f87ffce' ? '' : key);
+    
+    // Initial ping for enabled sources
+    [...(s.movieboxSources || []), ...(s.liveSportsProviders || [])]
+      .filter(source => source.enabled)
+      .forEach(source => testConnection(source.url));
   };
 
-  const addProvider = () => {
-    if (!newProviderName || !newProviderUrl) {
-      showAlert('Error', 'Please enter both provider name and URL.', null, 'OK', null, null, 'error');
-      return;
+  // focus effect moved up
+
+  const testConnection = async (url) => {
+    if (!url) return;
+    setSourceStatuses(prev => ({ ...prev, [url]: 'testing' }));
+    try {
+      let testUrl = url.trim();
+      if (!/^https?:\/\//i.test(testUrl)) {
+        testUrl = `https://${testUrl}`;
+      }
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      await fetch(testUrl, { method: 'HEAD', signal: controller.signal });
+      clearTimeout(timeoutId);
+      setSourceStatuses(prev => ({ ...prev, [url]: 'success' }));
+    } catch (e) {
+      setSourceStatuses(prev => ({ ...prev, [url]: 'error' }));
     }
-    const updated = {
-      ...settings,
-      liveSportsProviders: [
-        ...settings.liveSportsProviders,
-        {
-          name: newProviderName,
-          url: newProviderUrl.startsWith('http')
-            ? newProviderUrl
-            : `https://${newProviderUrl}`,
-        },
-      ],
-    };
-    setSettings(updated);
-    setNewProviderName('');
-    setNewProviderUrl('');
   };
 
-  const removeProvider = index => {
-    const updated = {
-      ...settings,
-      liveSportsProviders: settings.liveSportsProviders.filter(
-        (_, i) => i !== index,
-      ),
-    };
+  // handleSave removed in favor of auto-save effect
+
+  const toggleSource = (type, index) => {
+    const updated = { ...settings };
+    const list = type === 'moviebox' ? updated.movieboxSources : updated.liveSportsProviders;
+    
+    if (!list[index].enabled) {
+      const enabledCount = list.filter(s => s.enabled).length;
+      if (enabledCount >= 3) {
+        showAlert('Limit Reached', `You can only enable up to 3 ${type === 'moviebox' ? 'streaming sources' : 'sports providers'} at a time. Please disable one first.`, null, 'OK', null, null, 'warning');
+        return;
+      }
+    }
+
+    list[index].enabled = !list[index].enabled;
     setSettings(updated);
+    if (list[index].enabled) testConnection(list[index].url);
   };
+
+  // Handlers for managing sources moved to SourceManagerScreen
+
 
 
 
@@ -283,83 +292,214 @@ const SettingsScreen = ({ navigation }) => {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingTop: topPadding }}
       >
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity 
+            style={styles.backBtn}
+            onPress={() => navigation.goBack()}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+          </TouchableOpacity>
+          <View style={{ alignItems: 'center' }}>
+            <Text style={styles.headerTitle}>Settings</Text>
+            {showSaved && <Text style={styles.autoSaveText}>Auto-saved</Text>}
+          </View>
+          <View style={{ width: 40 }} /> 
+        </View>
+
         <View style={{ height: Spacing.md }} />
 
-        {/* Header */}
-        <View style={styles.headerSection}>
-          <View style={styles.logoBox}>
-            <Image
-              source={require('../assets/images/logo.png')}
-              style={styles.logoImage}
-              resizeMode="contain"
-            />
-          </View>
-          <Text style={styles.appTitle}>StreamDeck</Text>
-          <Text style={styles.appSubtitle}>
-            Configure your streaming experience
-          </Text>
+        {/* Account & Sync - NOW ON TOP */}
+        <View style={styles.section}>
+          <CollapsibleHeader 
+            title="ACCOUNT & SYNC" 
+            sectionKey="account" 
+            isExpanded={expandedSections.account}
+            onToggle={toggleSection}
+          />
+          {expandedSections.account && (
+            <View style={styles.card}>
+              {user ? (
+                <View style={styles.connectedCard}>
+                  <LinearGradient
+                    colors={['rgba(16, 185, 129, 0.1)', 'rgba(16, 185, 129, 0.05)']}
+                    style={styles.connectedGradient}
+                  >
+                    <View style={styles.connectedHeader}>
+                      <View style={styles.successBadge}>
+                        <Text style={styles.successCheck}>✓</Text>
+                      </View>
+                      <View style={styles.connectedTextInfo}>
+                        <Text style={styles.connectedStatus}>Successfully Connected</Text>
+                        <Text style={styles.connectedUser}>{user.displayName || 'Synced Account'}</Text>
+                        <Text style={styles.connectedEmail}>{user.email}</Text>
+                      </View>
+                    </View>
+                    
+                    <View style={styles.connectedActions}>
+                      <TouchableOpacity 
+                        style={styles.switchAccountBtn}
+                        onPress={async () => {
+                          try {
+                            setSyncing(true);
+                            await signInWithGoogle();
+                            setSyncing(false);
+                          } catch (e) {
+                            setSyncing(false);
+                          }
+                        }}
+                      >
+                        <Text style={styles.switchAccountText}>Switch Account</Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity 
+                        style={styles.logoutBtn}
+                        onPress={async () => {
+                          await signOut();
+                          showAlert('Signed Out', 'Cloud sync is now disabled.', null, 'OK', null, null, 'info');
+                        }}
+                      >
+                        <Text style={styles.logoutText}>Sign Out</Text>
+                      </TouchableOpacity>
+                    </View>
+                  </LinearGradient>
+                </View>
+              ) : (
+                <>
+                  <Text style={styles.fieldLabel}>Cloud Sync</Text>
+                  <Text style={styles.fieldHint}>
+                    Keep your Library and Settings synced across all your devices.
+                  </Text>
+                  <TouchableOpacity 
+                    style={styles.googleBtn}
+                    onPress={async () => {
+                      try {
+                        setSyncing(true);
+                        await signInWithGoogle();
+                        setSyncing(false);
+                      } catch (e) {
+                        setSyncing(false);
+                        if (e.code !== 'ASYNC_OP_IN_PROGRESS') {
+                          showAlert('Sync Failed', 'Could not connect to Google.', null, 'OK', null, null, 'error');
+                        }
+                      }
+                    }}
+                  >
+                    <Text style={styles.googleBtnText}>Sign in with Google</Text>
+                  </TouchableOpacity>
+                </>
+              )}
+
+              <View style={styles.privacyNote}>
+                <Text style={styles.privacyNoteText}>
+                  🛡️ <Text style={{ fontWeight: 'bold' }}>Privacy First:</Text> Cloud sync is optional.
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+
+        {/* Personal Section */}
+        <View style={styles.section}>
+          <CollapsibleHeader 
+            title="PERSONAL" 
+            sectionKey="personal" 
+            isExpanded={expandedSections.personal}
+            onToggle={toggleSection}
+          />
+          {expandedSections.personal && (
+            <View style={styles.card}>
+              <TouchableOpacity 
+                style={styles.libraryRow}
+                onPress={() => navigation.navigate('Library')}
+                activeOpacity={0.7}
+              >
+                <View style={styles.libraryIconBox}>
+                  <Text style={styles.libraryEmoji}>☰</Text>
+                </View>
+                <View style={styles.libraryInfo}>
+                  <Text style={styles.libraryTitle}>My Library</Text>
+                  <Text style={styles.librarySubtitle}>Your watchlist and saved gems</Text>
+                </View>
+                <Text style={styles.chevron}>→</Text>
+              </TouchableOpacity>
+            </View>
+          )}
         </View>
 
         {/* TMDB API Key */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>SMART SEARCH (TMDB API)</Text>
-          <View style={styles.card}>
-            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-              <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>TMDB API Key</Text>
-              <TouchableOpacity onPress={() => Linking.openURL('https://www.themoviedb.org/settings/api')}>
-                <Text style={styles.pingLink}>Get API Key ↗</Text>
-              </TouchableOpacity>
+          <CollapsibleHeader 
+            title="SMART SEARCH (TMDB API)" 
+            sectionKey="tmdb" 
+            isExpanded={expandedSections.tmdb}
+            onToggle={toggleSection}
+          />
+          {expandedSections.tmdb && (
+            <View style={styles.card}>
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                <Text style={[styles.fieldLabel, { marginBottom: 0 }]}>TMDB API Key</Text>
+                <TouchableOpacity onPress={() => Linking.openURL('https://www.themoviedb.org/settings/api')}>
+                  <Text style={styles.pingLink}>Get API Key ↗</Text>
+                </TouchableOpacity>
+              </View>
+              <Text style={styles.fieldHint}>
+                Used for posters, trending lists, and search results.
+              </Text>
+              <View style={styles.passwordInputContainer}>
+                <TextInput
+                  style={styles.innerInput}
+                  value={apiKey}
+                  onChangeText={setApiKeyState}
+                  placeholder="Paste your TMDB API key here..."
+                  placeholderTextColor={Colors.textMuted}
+                  autoCorrect={false}
+                  autoCapitalize="none"
+                  secureTextEntry={!showApiKey}
+                />
+                <TouchableOpacity
+                  style={styles.eyeBtn}
+                  onPress={() => setShowApiKey(!showApiKey)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.eyeIcon}>{showApiKey ? '👁️' : '👁️‍🗨️'}</Text>
+                </TouchableOpacity>
+              </View>
             </View>
-            <Text style={styles.fieldHint}>
-              StreamDeck uses TMDB to fetch movie posters, trending lists, and search results. You only need to set this up once, it's free and takes under 2 minutes.
-              {'\n\n'}<Text style={{ fontWeight: 'bold', color: Colors.textSecondary }}>Quick Tip:</Text> When filling the TMDB API form, select "Developer" and simply type "Personal Use" or "N/A" for all the required fields (like App Name, URL, and Description) to skip the hassle!
-            </Text>
-            <View style={styles.passwordInputContainer}>
-              <TextInput
-                style={styles.innerInput}
-                value={apiKey}
-                onChangeText={setApiKeyState}
-                placeholder="Paste your TMDB API key here..."
-                placeholderTextColor={Colors.textMuted}
-                autoCorrect={false}
-                autoCapitalize="none"
-                secureTextEntry={!showApiKey}
-              />
-              <TouchableOpacity
-                style={styles.eyeBtn}
-                onPress={() => setShowApiKey(!showApiKey)}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.eyeIcon}>{showApiKey ? '👁️' : '👁️‍🗨️'}</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
+          )}
         </View>
 
         {/* Content Region */}
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>CONTENT REGION</Text>
-          <View style={styles.card}>
-            <Text style={styles.fieldLabel}>Trending Region</Text>
-            <Text style={styles.fieldHint}>
-              Select the country used for displaying trending content and platform recommendations.
-            </Text>
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.sm }}>
-              {REGIONS.map(region => {
-                const isActive = contentRegion === region.code;
-                return (
-                  <TouchableOpacity
-                    key={region.code}
-                    onPress={() => setContentRegion(region.code)}
-                    style={[styles.regionChip, isActive && styles.regionChipActive]}
-                    activeOpacity={0.7}>
-                    <Text style={[styles.regionFlag, isActive && { opacity: 1 }]}>{region.flag}</Text>
-                    <Text style={[styles.regionName, isActive && styles.regionNameActive]}>{region.name}</Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </ScrollView>
-          </View>
+          <CollapsibleHeader 
+            title="CONTENT REGION" 
+            sectionKey="region" 
+            isExpanded={expandedSections.region}
+            onToggle={toggleSection}
+          />
+          {expandedSections.region && (
+            <View style={styles.card}>
+              <Text style={styles.fieldLabel}>Trending Region</Text>
+              <Text style={styles.fieldHint}>
+                The country used for platform recommendations.
+              </Text>
+              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.sm }}>
+                {REGIONS.map(region => {
+                  const isActive = settings.contentRegion === region.code;
+                  return (
+                    <TouchableOpacity
+                      key={region.code}
+                      onPress={() => setSettings(prev => ({ ...prev, contentRegion: region.code }))}
+                      style={[styles.regionChip, isActive && styles.regionChipActive]}
+                      activeOpacity={0.7}>
+                      <Text style={[styles.regionFlag, isActive && { opacity: 1 }]}>{region.flag}</Text>
+                      <Text style={[styles.regionName, isActive && styles.regionNameActive]}>{region.name}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            </View>
+          )}
         </View>
 
         {/* Streaming Sources */}
@@ -367,50 +507,53 @@ const SettingsScreen = ({ navigation }) => {
           style={styles.section}
           onLayout={e => movieboxY.current = e.nativeEvent.layout.y}
         >
-          <Text style={styles.sectionLabel}>STREAMING SOURCES</Text>
-          <View style={styles.card}>
-            {navigation.getState().routes.find(r => r.name === 'Settings')?.params?.highlightSection === 'moviebox' && (
-              <Animated.View style={flashStyle} />
-            )}
-            <Text style={styles.fieldLabel}>MovieBox Domain</Text>
-            <Text style={styles.fieldHint}>
-              Configure the MovieBox domain if the default is unreachable.
-            </Text>
-            <TextInput
-              style={styles.input}
-              value={movieboxDomain}
-              onChangeText={setMovieboxDomain}
-              placeholder="moviebox.mov"
-              placeholderTextColor={Colors.textMuted}
-              autoCorrect={false}
-              autoCapitalize="none"
-            />
+          <CollapsibleHeader 
+            title="STREAMING SOURCES" 
+            sectionKey="streaming" 
+            isExpanded={expandedSections.streaming}
+            onToggle={toggleSection}
+          />
+          {expandedSections.streaming && (
+            <View style={styles.card}>
+              <Text style={styles.fieldLabel}>MovieBox Sources</Text>
+              <Text style={styles.fieldHint}>
+                Add multiple domains to ensure a stable streaming experience.
+              </Text>
+              
+              {settings.movieboxSources.map((source, idx) => (
+                <View key={idx} style={[styles.sourceItem, !source.enabled && { opacity: 0.6 }]}>
+                    <View style={styles.sourceMain}>
+                      <View style={styles.sourceInfo}>
+                        <View style={[styles.statusDot, 
+                          sourceStatuses[source.url] === 'success' && styles.statusDotSuccess,
+                          sourceStatuses[source.url] === 'error' && styles.statusDotError,
+                          sourceStatuses[source.url] === 'testing' && styles.statusDotTesting
+                        ]} />
+                        <View>
+                          <Text style={styles.sourceName} numberOfLines={1}>{source.name}</Text>
+                          <Text style={styles.sourceUrlSmall} numberOfLines={1}>{source.url}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.sourceActions}>
+                        <Switch 
+                          value={source.enabled}
+                          onValueChange={() => toggleSource('moviebox', idx)}
+                          trackColor={{ false: '#333', true: 'rgba(16, 185, 129, 0.4)' }}
+                          thumbColor={source.enabled ? '#10b981' : '#666'}
+                        />
+                      </View>
+                    </View>
+                </View>
+              ))}
 
-            <View style={styles.pingContainer}>
-              {pingStatus === 'idle' && (
-                <View>
-                  <Text style={[styles.pingText, { marginBottom: 4 }]}>No source configured.</Text>
-                  <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#streaming-sites')}>
-                    <Text style={styles.pingLink}>Discover working sources here</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
-              {pingStatus === 'testing' && (
-                <Text style={styles.pingText}>Testing connection...</Text>
-              )}
-              {pingStatus === 'success' && (
-                <Text style={[styles.pingText, { color: '#10b981' }]}>🟢 Source connected successfully</Text>
-              )}
-              {pingStatus === 'error' && (
-                <View>
-                  <Text style={[styles.pingText, { color: '#ff4d4d', marginBottom: 4 }]}>🔴 Source unreachable</Text>
-                  <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#streaming-sites')}>
-                    <Text style={styles.pingLink}>Please choose a working site from here</Text>
-                  </TouchableOpacity>
-                </View>
-              )}
+              <TouchableOpacity 
+                style={styles.manageBtn}
+                onPress={() => navigation.navigate('SourceManager', { type: 'moviebox' })}
+              >
+                <Text style={styles.manageBtnText}>Manage Sources ⚙️</Text>
+              </TouchableOpacity>
             </View>
-          </View>
+          )}
         </View>
 
         {/* Live Sports Providers */}
@@ -418,130 +561,50 @@ const SettingsScreen = ({ navigation }) => {
           style={styles.section}
           onLayout={e => sportsY.current = e.nativeEvent.layout.y}
         >
-          <Text style={styles.sectionLabel}>LIVE SPORTS PROVIDERS</Text>
-          <View style={styles.card}>
-            {navigation.getState().routes.find(r => r.name === 'Settings')?.params?.highlightSection === 'sports' && (
-              <Animated.View style={flashStyle} />
-            )}
-            {settings.liveSportsProviders.map((provider, idx) => (
-              <View key={idx} style={styles.providerRow}>
-                <View style={styles.providerInfo}>
-                  <Text style={styles.providerName}>{provider.name}</Text>
-                  <Text style={styles.providerUrl}>{provider.url}</Text>
+          <CollapsibleHeader 
+            title="LIVE SPORTS" 
+            sectionKey="sports" 
+            isExpanded={expandedSections.sports}
+            onToggle={toggleSection}
+          />
+          {expandedSections.sports && (
+            <View style={styles.card}>
+              <Text style={styles.fieldLabel}>Sports Providers</Text>
+              
+              {settings.liveSportsProviders.map((provider, idx) => (
+                <View key={idx} style={[styles.sourceItem, !provider.enabled && { opacity: 0.6 }]}>
+                    <View style={styles.sourceMain}>
+                      <View style={styles.sourceInfo}>
+                        <View style={[styles.statusDot, 
+                          sourceStatuses[provider.url] === 'success' && styles.statusDotSuccess,
+                          sourceStatuses[provider.url] === 'error' && styles.statusDotError,
+                          sourceStatuses[provider.url] === 'testing' && styles.statusDotTesting
+                        ]} />
+                        <View>
+                          <Text style={styles.sourceName} numberOfLines={1}>{provider.name}</Text>
+                          <Text style={styles.sourceUrlSmall} numberOfLines={1}>{provider.url}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.sourceActions}>
+                        <Switch 
+                          value={provider.enabled}
+                          onValueChange={() => toggleSource('sports', idx)}
+                          trackColor={{ false: '#333', true: 'rgba(16, 185, 129, 0.4)' }}
+                          thumbColor={provider.enabled ? '#10b981' : '#666'}
+                        />
+                      </View>
+                    </View>
                 </View>
-                <TouchableOpacity
-                  onPress={() => removeProvider(idx)}
-                  style={styles.removeBtn}>
-                  <Text style={styles.removeText}>✕</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+              ))}
 
-            <View style={styles.addProviderSection}>
-              <TextInput
-                style={[styles.input, { marginBottom: Spacing.sm }]}
-                value={newProviderName}
-                onChangeText={setNewProviderName}
-                placeholder="Provider name"
-                placeholderTextColor={Colors.textMuted}
-              />
-              <TextInput
-                style={[styles.input, { marginBottom: Spacing.md }]}
-                value={newProviderUrl}
-                onChangeText={setNewProviderUrl}
-                placeholder="Provider URL (e.g. sportslivetoday.com)"
-                placeholderTextColor={Colors.textMuted}
-                autoCapitalize="none"
-              />
-
-              <View style={[styles.pingContainer, { marginBottom: Spacing.md, marginTop: 0 }]}>
-                {sportsPingStatus === 'idle' && (
-                  <View>
-                    <Text style={[styles.pingText, { marginBottom: 4 }]}>No provider URL entered.</Text>
-                    <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#live-tv')}>
-                      <Text style={styles.pingLink}>Discover working providers here</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-                {sportsPingStatus === 'testing' && (
-                  <Text style={styles.pingText}>Testing connection...</Text>
-                )}
-                {sportsPingStatus === 'success' && (
-                  <Text style={[styles.pingText, { color: '#10b981' }]}>🟢 Source connected successfully</Text>
-                )}
-                {sportsPingStatus === 'error' && (
-                  <View>
-                    <Text style={[styles.pingText, { color: '#ff4d4d', marginBottom: 4 }]}>🔴 Source unreachable</Text>
-                    <TouchableOpacity onPress={() => Linking.openURL('https://fmhy.net/video#live-tv')}>
-                      <Text style={styles.pingLink}>Please choose a working site from here</Text>
-                    </TouchableOpacity>
-                  </View>
-                )}
-              </View>
-
-              <TouchableOpacity
-                style={styles.addBtn}
-                onPress={addProvider}
-                activeOpacity={0.7}>
-                <Text style={styles.addBtnText}>+ Add Provider</Text>
+              <TouchableOpacity 
+                style={styles.manageBtn}
+                onPress={() => navigation.navigate('SourceManager', { type: 'sports' })}
+              >
+                <Text style={styles.manageBtnText}>Manage Providers ⚙️</Text>
               </TouchableOpacity>
             </View>
-          </View>
-        </View>
-
-        {/* Data Management */}
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>DATA MANAGEMENT</Text>
-          <View style={styles.card}>
-            <TouchableOpacity
-              style={styles.dangerBtn}
-              onPress={() => {
-                showAlert(
-                  "Reset Library?",
-                  "This will clear your watchlist and saved discovery gems. This cannot be undone.",
-                  async () => {
-                    try {
-                      await AsyncStorage.removeItem('streamdeck_mobile_watchlist');
-                      await AsyncStorage.removeItem('streamdeck_mobile_adventure_saved');
-                      showAlert('Reset Complete', 'Your discovery vibes have been reset.', null, 'OK', null, null, 'success');
-                    } catch (e) {
-                      showAlert('Error', 'Failed to clear data.', null, 'OK', null, null, 'error');
-                    }
-                  },
-                  "Reset",
-                  () => {},
-                  "Cancel",
-                  "warning"
-                );
-              }}
-              activeOpacity={0.7}>
-              <Text style={styles.dangerBtnText}>
-                Reset Adventure Preferences
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Save Button */}
-        <View style={styles.saveSection}>
-          <TouchableOpacity
-            style={styles.saveBtn}
-            onPress={handleSave}
-            activeOpacity={0.8}>
-            <LinearGradient
-              colors={
-                saved
-                  ? ['#10b981', '#059669']
-                  : [Colors.accentPurple, Colors.accentPink]
-              }
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.saveGradient}>
-              <Text style={styles.saveBtnText}>
-                {saved ? '✓ Saved!' : 'Save Settings'}
-              </Text>
-            </LinearGradient>
-          </TouchableOpacity>
+          )}
         </View>
 
         {/* App Info */}
@@ -604,6 +667,77 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.sm,
     color: Colors.textMuted,
   },
+  libraryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 4,
+  },
+  libraryIconBox: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    backgroundColor: 'rgba(157, 78, 221, 0.15)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(157, 78, 221, 0.2)',
+  },
+  libraryEmoji: {
+    fontSize: 20,
+    color: Colors.accentPurple,
+  },
+  libraryInfo: {
+    flex: 1,
+  },
+  libraryTitle: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  librarySubtitle: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  chevron: {
+    fontSize: 20,
+    color: 'rgba(255,255,255,0.2)',
+    fontWeight: '300',
+  },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backIcon: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  headerTitle: {
+    color: Colors.textPrimary,
+    fontSize: 22,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+  },
+  autoSaveText: {
+    color: Colors.accentPink,
+    fontSize: 10,
+    fontWeight: 'bold',
+    marginTop: -2,
+    textTransform: 'uppercase',
+  },
   section: {
     paddingHorizontal: Spacing.xl,
     marginBottom: Spacing.xxl,
@@ -613,7 +747,252 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.textMuted,
     letterSpacing: 1.5,
+  },
+  collapsibleHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     marginBottom: Spacing.md,
+    paddingVertical: 4,
+  },
+  expandIcon: {
+    fontSize: 22,
+    color: Colors.textMuted,
+    fontWeight: '300',
+  },
+  connectedCard: {
+    borderRadius: BorderRadius.lg,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.2)',
+  },
+  connectedGradient: {
+    padding: Spacing.lg,
+  },
+  connectedHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: Spacing.xl,
+  },
+  successBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#10b981',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 16,
+    elevation: 4,
+  },
+  successCheck: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  connectedTextInfo: {
+    flex: 1,
+  },
+  connectedStatus: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: '#10b981',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+    marginBottom: 4,
+  },
+  connectedUser: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: Colors.textPrimary,
+  },
+  connectedEmail: {
+    fontSize: 14,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  connectedActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  switchAccountBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(255,255,255,0.08)',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  switchAccountText: {
+    color: Colors.textPrimary,
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  logoutBtn: {
+    flex: 1,
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingVertical: 12,
+    borderRadius: 12,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  logoutText: {
+    color: '#ef4444',
+    fontWeight: '700',
+    fontSize: 14,
+  },
+  sourceItem: {
+    backgroundColor: 'rgba(0,0,0,0.2)',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  sourceMain: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  sourceInfo: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#666',
+    marginRight: 10,
+  },
+  statusDotSuccess: {
+    backgroundColor: '#10b981',
+    shadowColor: '#10b981',
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  statusDotError: {
+    backgroundColor: '#ef4444',
+  },
+  statusDotTesting: {
+    backgroundColor: '#f59e0b',
+  },
+  sourceUrl: {
+    color: Colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  sourceName: {
+    color: Colors.textPrimary,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  sourceUrlSmall: {
+    color: Colors.textMuted,
+    fontSize: 12,
+    marginTop: 2,
+  },
+  sourceActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  miniRemove: {
+    padding: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.15)',
+    borderRadius: 8,
+    width: 32,
+    height: 32,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  miniRemoveText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+  miniEdit: {
+    padding: 8,
+    marginRight: 4,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+  },
+  miniEditText: {
+    fontSize: 14,
+  },
+  editForm: {
+    gap: 8,
+  },
+  editInput: {
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    color: Colors.textPrimary,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    fontSize: 14,
+  },
+  editActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+    marginTop: 4,
+  },
+  editBtnSave: {
+    backgroundColor: '#10b981',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  editBtnCancel: {
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+  },
+  editBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: 'bold',
+  },
+  addInline: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  inlineInput: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    color: Colors.textPrimary,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  inlineAddBtn: {
+    backgroundColor: Colors.accentPurple,
+    paddingHorizontal: 16,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  inlineAddText: {
+    color: '#fff',
+    fontWeight: 'bold',
+    fontSize: 14,
+  },
+  addProviderBox: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255,255,255,0.05)',
   },
   card: {
     backgroundColor: Colors.bgCard,
@@ -633,6 +1012,22 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     marginBottom: Spacing.md,
     lineHeight: 22,
+  },
+  manageBtn: {
+    marginTop: 12,
+    backgroundColor: 'rgba(157, 78, 221, 0.1)',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(157, 78, 221, 0.2)',
+  },
+  manageBtnText: {
+    color: Colors.accentPurple,
+    fontSize: 14,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
   },
   input: {
     backgroundColor: 'rgba(0, 0, 0, 0.3)',
@@ -779,6 +1174,70 @@ const styles = StyleSheet.create({
     fontSize: FontSizes.md,
     fontWeight: '600',
     color: '#ff6b6b',
+  },
+  accountBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 16,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  userInfo: {
+    flex: 1,
+  },
+  userName: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#fff',
+  },
+  userEmail: {
+    fontSize: 12,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  signOutBtn: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  signOutText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: 'rgba(255, 255, 255, 0.6)',
+  },
+  googleBtn: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginBottom: Spacing.md,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+  },
+  googleBtnText: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#000',
+  },
+  privacyNote: {
+    padding: Spacing.md,
+    backgroundColor: 'rgba(16, 185, 129, 0.05)',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.1)',
+  },
+  privacyNoteText: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.5)',
+    lineHeight: 18,
   },
   saveSection: {
     paddingHorizontal: Spacing.xl,

@@ -1,5 +1,5 @@
 // StreamDeck Mobile — Live TV Screen
-import React, {useState} from 'react';
+import React, {useState, useEffect} from 'react';
 import {
   View,
   Text,
@@ -14,19 +14,28 @@ import {
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withRepeat,
+  withTiming,
+  Easing,
+} from 'react-native-reanimated';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import SectionHeader from '../components/SectionHeader';
 import { loadSettings } from '../utils/storage';
 import { useFocusEffect } from '@react-navigation/native';
 import { fetchLiveSportsData } from '../services/sports';
+import Ionicons from 'react-native-vector-icons/Ionicons';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 
 const SPORT_CATEGORIES = [
-  {id: 'all', name: 'All Sports', icon: '🏆'},
-  {id: 'cricket', name: 'Cricket', icon: '🏏'},
-  {id: 'football', name: 'Football', icon: '⚽'},
-  {id: 'f1', name: 'F1 Racing', icon: '🏎️'},
+  {id: 'all', name: 'All Sports', icon: 'grid-outline'},
+  {id: 'cricket', name: 'Cricket', icon: 'cricket', iconType: 'MCI'},
+  {id: 'football', name: 'Football', icon: 'football-outline'},
+  {id: 'f1', name: 'F1 Racing', icon: 'speedometer-outline'},
 ];
 
 const PROVIDER_CONFIG = {
@@ -50,6 +59,21 @@ const LiveTVScreen = ({navigation}) => {
   const [customProviders, setCustomProviders] = useState([]);
   const [liveMatches, setLiveMatches] = useState([]);
   const [loadingMatches, setLoadingMatches] = useState(true);
+
+  // Reanimated Hooks (Must be stable at the top)
+  const rotation = useSharedValue(0);
+
+  useEffect(() => {
+    rotation.value = withRepeat(
+      withTiming(360, { duration: 3000, easing: Easing.linear }),
+      -1,
+      false
+    );
+  }, [rotation]);
+
+  const glowAnimatedStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${rotation.value}deg` }],
+  }));
 
   // Fetch custom providers from settings whenever this screen comes into focus
   useFocusEffect(
@@ -249,34 +273,69 @@ const LiveTVScreen = ({navigation}) => {
         <SectionHeader
           title="Live TV"
           subtitle="Watch live sports and TV channels"
+          rightAction={
+            <TouchableOpacity 
+              onPress={() => navigation.navigate('SourceManager', { type: 'sports' })}
+              style={styles.headerPillAction}
+            >
+              <Ionicons name="add" size={16} color={Colors.textPrimary} style={{marginRight: 4}} />
+              <Text style={styles.headerActionText}>Sources</Text>
+            </TouchableOpacity>
+          }
         />
 
-        {/* Category Filter */}
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          style={styles.categoryScroll}
-          contentContainerStyle={styles.categoryContent}>
-          {SPORT_CATEGORIES.map(cat => (
-            <TouchableOpacity
-              key={cat.id}
-              style={[
-                styles.categoryChip,
-                selectedCategory === cat.id && styles.categoryChipActive,
-              ]}
-              onPress={() => setSelectedCategory(cat.id)}
-              activeOpacity={0.7}>
-              <Text style={styles.categoryIcon}>{cat.icon}</Text>
-              <Text
-                style={[
-                  styles.categoryText,
-                  selectedCategory === cat.id && styles.categoryTextActive,
-                ]}>
-                {cat.name}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Category Filter — Dynamic Glow Tabs */}
+        <View style={styles.tabContainer}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.tabContent}>
+            {SPORT_CATEGORIES.map(cat => {
+              const isSelected = selectedCategory === cat.id;
+              return (
+                <TouchableOpacity
+                  key={cat.id}
+                  style={styles.categoryChipContainer}
+                  onPress={() => setSelectedCategory(cat.id)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[styles.categoryChip, isSelected && styles.categoryChipActive]}>
+                    {isSelected && (
+                      <Animated.View style={[styles.glowBorder, glowAnimatedStyle]}>
+                        <LinearGradient
+                          colors={[Colors.accentPink, 'transparent', Colors.accentPink, 'transparent', Colors.accentPink]}
+                          style={{ flex: 1 }}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 1 }}
+                        />
+                      </Animated.View>
+                    )}
+                    <View style={[styles.categoryChipInner, isSelected && styles.categoryChipInnerActive]}>
+                    {cat.iconType === 'MCI' ? (
+                      <MaterialCommunityIcons 
+                        name={cat.icon} 
+                        size={18} 
+                        color={isSelected ? '#fff' : 'rgba(255,255,255,0.4)'} 
+                        style={{ marginRight: 6 }} 
+                      />
+                    ) : (
+                      <Ionicons 
+                        name={cat.icon} 
+                        size={16} 
+                        color={isSelected ? '#fff' : 'rgba(255,255,255,0.4)'} 
+                        style={{ marginRight: 6 }} 
+                      />
+                    )}
+                      <Text style={[styles.categoryText, isSelected && styles.categoryTextActive]}>
+                        {cat.name}
+                      </Text>
+                    </View>
+                  </View>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+        </View>
 
         {/* Live Matches Section */}
         <View style={styles.liveMatchesSection}>
@@ -326,23 +385,32 @@ const LiveTVScreen = ({navigation}) => {
           )}
         </View>
 
-        {/* Quick Access Section */}
+        {/* Premium Access Section */}
         <View style={styles.quickAccessSection}>
-          <Text style={styles.sectionLabel}>QUICK ACCESS</Text>
-          <View style={styles.quickGrid}>
+          <Text style={styles.sectionLabel}>PREMIUM ACCESS</Text>
+          <View style={styles.premiumGrid}>
             {[
-              {name: 'IPL Live', icon: '🏏', url: 'https://www.hotstar.com', color: '#1F74DB'},
-              {name: 'Football', icon: '⚽', url: 'https://sportslivetoday.com', color: '#38003C'},
-              {name: 'F1 Live', icon: '🏎️', url: 'https://fancode.com', color: '#E10600'},
-              {name: 'Others', icon: '🌍', url: 'https://fmhy.net/video#live-tv', color: '#8B5CF6'},
+              {name: 'Cricket', icon: 'cricket', iconType: 'MCI', color: '#1F74DB'},
+              {name: 'Football', icon: 'football-outline', color: '#3B82F6'},
+              {name: 'F1 Live', icon: 'speedometer-outline', color: '#E10600'},
+              {name: 'Others', icon: 'globe-outline', color: '#8B5CF6'},
             ].map((item, idx) => (
               <TouchableOpacity
                 key={idx}
-                style={[styles.quickCard, {borderColor: item.color + '40'}]}
+                style={styles.premiumCard}
                 onPress={() => handleQuickAccessPress(item)}
-                activeOpacity={0.7}>
-                <Text style={styles.quickIcon}>{item.icon}</Text>
-                <Text style={styles.quickName}>{item.name}</Text>
+                activeOpacity={0.8}>
+                <View style={[styles.premiumIconBox, {backgroundColor: item.color + '15'}]}>
+                  {item.iconType === 'MCI' ? (
+                    <MaterialCommunityIcons name={item.icon} size={22} color={item.color} />
+                  ) : (
+                    <Ionicons name={item.icon} size={20} color={item.color} />
+                  )}
+                </View>
+                <View style={styles.premiumInfo}>
+                  <Text style={styles.premiumName}>{item.name}</Text>
+                </View>
+                <Ionicons name="chevron-forward" size={14} color="rgba(255,255,255,0.15)" />
               </TouchableOpacity>
             ))}
           </View>
@@ -405,39 +473,62 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
     paddingHorizontal: Spacing.xl,
   },
-  categoryScroll: {
-    marginBottom: Spacing.lg,
+  tabContainer: {
+    marginBottom: Spacing.xl,
+    marginTop: Spacing.md,
   },
-  categoryContent: {
+  tabContent: {
     paddingHorizontal: Spacing.xl,
-    gap: Spacing.sm,
+    gap: 12,
+  },
+  categoryChipContainer: {
+    marginRight: 4,
   },
   categoryChip: {
-    flexDirection: 'row',
+    padding: 1.5,
+    borderRadius: 13,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    overflow: 'hidden',
+    justifyContent: 'center',
     alignItems: 'center',
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.sm,
-    borderRadius: BorderRadius.round,
-    backgroundColor: Colors.bgCard,
     borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    gap: 6,
-    marginRight: Spacing.sm,
+    borderColor: 'rgba(255,255,255,0.08)',
   },
   categoryChipActive: {
-    backgroundColor: Colors.accentPurple + '20',
-    borderColor: Colors.accentPurple + '60',
+    backgroundColor: '#000',
+    borderColor: Colors.accentPink + '40',
+    shadowColor: Colors.accentPink,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.5,
+    shadowRadius: 8,
+    elevation: 5,
   },
-  categoryIcon: {
-    fontSize: 14,
+  categoryChipInner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+  },
+  categoryChipInnerActive: {
+    backgroundColor: '#000',
+  },
+  glowBorder: {
+    position: 'absolute',
+    width: 200,
+    height: 200,
+    top: -75,
+    left: -50,
   },
   categoryText: {
-    fontSize: FontSizes.sm,
-    color: Colors.textSecondary,
-    fontWeight: '600',
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 14,
+    fontWeight: '700',
   },
   categoryTextActive: {
-    color: Colors.accentPurple,
+    color: '#fff',
+    fontWeight: '800',
   },
   liveMatchesSection: {
     marginTop: Spacing.lg,
@@ -460,11 +551,11 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
   },
   matchCard: {
-    width: 240,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    borderColor: Colors.borderSubtle,
+    width: 260,
+    backgroundColor: 'rgba(25, 25, 30, 0.9)',
+    borderRadius: 20,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
     overflow: 'hidden',
   },
   matchThumbContainer: {
@@ -580,30 +671,42 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   quickAccessSection: {
-    marginTop: Spacing.xxl,
+    marginTop: Spacing.xl,
   },
-  quickGrid: {
+  premiumGrid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: Spacing.md,
     paddingHorizontal: Spacing.xl,
+    gap: 10,
   },
-  quickCard: {
-    width: (SCREEN_WIDTH - Spacing.xl * 2 - Spacing.md) / 2,
-    backgroundColor: Colors.bgCard,
-    borderRadius: BorderRadius.lg,
-    borderWidth: 1,
-    padding: Spacing.xl,
+  premiumCard: {
+    width: (SCREEN_WIDTH - Spacing.xl * 2 - 10) / 2,
+    flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.sm,
+    backgroundColor: 'rgba(25, 25, 30, 0.95)',
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    gap: 10,
   },
-  quickIcon: {
-    fontSize: 32,
+  premiumIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  quickName: {
-    fontSize: FontSizes.md,
-    fontWeight: '700',
-    color: Colors.textPrimary,
+  premiumInfo: {
+    flex: 1,
+  },
+  premiumName: {
+    fontSize: 13,
+    fontWeight: '800',
+    color: '#fff',
+    letterSpacing: 0.1,
   },
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
   modalContent: {
@@ -642,6 +745,23 @@ const styles = StyleSheet.create({
     borderRadius: 18,
   },
   closeModalText: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.4)' },
+  headerPillAction: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(15, 15, 20, 0.98)',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+    justifyContent: 'center',
+  },
+  headerActionText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
 });
 
 export default LiveTVScreen;

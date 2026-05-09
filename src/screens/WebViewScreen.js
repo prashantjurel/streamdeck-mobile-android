@@ -18,6 +18,7 @@ import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {useFocusEffect} from '@react-navigation/native';
 import { useWindowDimensions } from 'react-native';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const WebViewScreen = ({navigation, route}) => {
   const {url, title, appId, color, isAdventure, cards, initialIndex, onUpdateIndex, type} = route.params;
@@ -163,13 +164,18 @@ const WebViewScreen = ({navigation, route}) => {
             style={styles.backBtn}
             onPress={() => navigation.goBack()}
             activeOpacity={0.7}>
-            <Text style={styles.backIcon}>←</Text>
+            <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
           </TouchableOpacity>
 
           <View style={styles.titleSection}>
-            <View style={[styles.appDot, {backgroundColor: themeColor}]} />
-            <Text style={styles.title} numberOfLines={1}>
-              {pageTitle}
+            <View style={styles.titleRow}>
+              <View style={[styles.appDot, {backgroundColor: themeColor}]} />
+              <Text style={styles.title} numberOfLines={1}>
+                {pageTitle}
+              </Text>
+            </View>
+            <Text style={styles.urlText} numberOfLines={1}>
+              {currentUrl}
             </Text>
           </View>
 
@@ -179,14 +185,14 @@ const WebViewScreen = ({navigation, route}) => {
                 style={styles.actionBtn}
                 onPress={() => webViewRef.current?.goBack()}
                 activeOpacity={0.7}>
-                <Text style={styles.actionIcon}>◀</Text>
+                <Ionicons name="arrow-back" size={18} color={Colors.textSecondary} />
               </TouchableOpacity>
             )}
             <TouchableOpacity
               style={styles.actionBtn}
               onPress={() => webViewRef.current?.reload()}
               activeOpacity={0.7}>
-              <Text style={styles.actionIcon}>⟲</Text>
+              <Ionicons name="refresh" size={18} color={Colors.textSecondary} />
             </TouchableOpacity>
           </View>
         </View>
@@ -294,9 +300,8 @@ const WebViewScreen = ({navigation, route}) => {
             </Text>
             <TouchableOpacity
               style={styles.errorActionBtn}
-              onPress={() => navigation.navigate('MainTabs', { 
-                screen: 'Settings',
-                params: { highlightSection: type === 'sports' ? 'sports' : 'moviebox' }
+              onPress={() => navigation.navigate('Settings', { 
+                highlightSection: type === 'sports' ? 'sports' : 'moviebox' 
               })}
               activeOpacity={0.8}>
               <LinearGradient
@@ -384,9 +389,12 @@ const styles = StyleSheet.create({
   },
   titleSection: {
     flex: 1,
+    marginLeft: Spacing.md,
+    justifyContent: 'center',
+  },
+  titleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginLeft: Spacing.md,
     gap: Spacing.sm,
   },
   appDot: {
@@ -395,10 +403,14 @@ const styles = StyleSheet.create({
     borderRadius: 4,
   },
   title: {
-    fontSize: FontSizes.md,
-    fontWeight: '600',
+    fontSize: FontSizes.sm,
+    fontWeight: '700',
     color: Colors.textPrimary,
-    flex: 1,
+  },
+  urlText: {
+    fontSize: 10,
+    color: Colors.textMuted,
+    marginTop: 1,
   },
   actions: {
     flexDirection: 'row',

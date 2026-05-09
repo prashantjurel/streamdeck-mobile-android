@@ -18,10 +18,11 @@ import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
-import {loadWatchlist, toggleWatchlistItem, getDefaultSettings} from '../utils/storage';
+import {loadWatchlist, toggleWatchlistItem, loadSettings} from '../utils/storage';
 import {getImageUrl, fetchWatchProviders} from '../services/tmdb';
 import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
 import SectionHeader from '../components/SectionHeader';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const GRID_CARD_WIDTH = (SCREEN_WIDTH - Spacing.xl * 2 - Spacing.md * 2) / 3;
@@ -35,7 +36,7 @@ const LibraryScreen = ({navigation}) => {
   const [availableProviders, setAvailableProviders] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
   const [selectedMovie, setSelectedMovie] = useState(null);
-  const [movieboxDomain, setMovieboxDomain] = useState('cineby.sc');
+  const [movieboxSources, setMovieboxSources] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Fallback padding for devices that report 0 insets
@@ -48,13 +49,11 @@ const LibraryScreen = ({navigation}) => {
       const [wlItems, advItemsRaw, settings] = await Promise.all([
         loadWatchlist(),
         AsyncStorage.getItem('streamdeck_mobile_adventure_saved'),
-        getDefaultSettings()
+        loadSettings()
       ]);
       setWatchlist(wlItems || []);
       setAdventures(advItemsRaw ? JSON.parse(advItemsRaw) : []);
-      if (settings?.movieboxDomain) {
-        setMovieboxDomain(settings.movieboxDomain);
-      }
+      setMovieboxSources(settings?.movieboxSources || []);
     } catch (e) {
       console.error('[Library] Load error:', e);
     } finally {
@@ -113,17 +112,21 @@ const LibraryScreen = ({navigation}) => {
         });
       }
 
-      if (!found.find(p => p.id === 'moviebox')) {
-        const domain = movieboxDomain.replace('http://', '').replace('https://', '');
-        found.push({
-          id: 'moviebox',
-          name: 'MovieBox',
-          color: '#E21D48',
-          icon: '🍿',
-          logoUrl: null,
-          searchUrl: `https://${domain}/search?q=`
+      // Add Enabled MovieBox Sources
+      (movieboxSources || [])
+        .filter(s => s.enabled)
+        .forEach((s, idx) => {
+          const mbDomain = s.url.trim();
+          found.push({
+            id: `moviebox_${idx}`,
+            name: s.name || 'MovieBox',
+            icon: '🍿',
+            color: '#E21D48',
+            logoUrl: null,
+            searchUrl: `https://${mbDomain.replace(/^https?:\/\//i, '')}/search?q=`,
+            customDomain: mbDomain,
+          });
         });
-      }
       if (!found.find(p => p.id === 'youtube')) {
         found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
       }
@@ -148,7 +151,7 @@ const LibraryScreen = ({navigation}) => {
       title,
       tmdbId,
       mediaType,
-      movieboxDomain,
+      provider.customDomain, // Use specific domain from provider object
       navigation
     );
   };
@@ -241,12 +244,16 @@ const LibraryScreen = ({navigation}) => {
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
       <View style={[styles.header, {paddingTop: topPadding + Spacing.md}]}>
-        <SectionHeader title="My Library" />
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>My Library</Text>
+        <View style={{ width: 40 }} />
       </View>
 
       {(watchlist.length === 0 && adventures.length === 0) ? (
         <View style={styles.emptyState}>
-          <Text style={styles.emptyIcon}>📚</Text>
+          <Text style={styles.emptyIcon}>💿📀</Text>
           <Text style={styles.emptyTitle}>Your Library is Empty</Text>
           <Text style={styles.emptySubtitle}>
             Save movies and discovery gems to see them here.
@@ -343,8 +350,30 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.bgPrimary,
   },
   header: {
-    paddingHorizontal: Spacing.xl,
-    marginBottom: Spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 20,
+    marginBottom: 24,
+  },
+  backBtn: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  backText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: 'bold',
+  },
+  headerTitle: {
+    color: Colors.textPrimary,
+    fontSize: 22,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
   },
   scrollContent: {
     paddingBottom: 40,

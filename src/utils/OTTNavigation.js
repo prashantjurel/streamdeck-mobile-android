@@ -54,9 +54,15 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
   if (provider.searchUrl) {
     finalUrl = `${provider.searchUrl}${query}`;
     
-    // Smart Resolution for MovieBox-compatible sites
-    if (provider.id === 'moviebox' && movieboxDomain && tmdbId && mediaType) {
-      const domain = movieboxDomain.replace('http://', '').replace('https://', '').toLowerCase().trim();
+    if (provider.id?.startsWith('moviebox') && movieboxDomain && tmdbId && mediaType) {
+      // Clean domain: extract root domain only (remove protocol, paths, slashes)
+      let domain = movieboxDomain.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase().trim();
+      
+      // Cineby specific fix: ensure www if missing (some sites redirect poorly without it)
+      if (domain.includes('cineby') && !domain.startsWith('www.')) {
+        domain = `www.${domain}`;
+      }
+
       const knownDirectDomains = ['cineby', 'bitcine', 'moviebox', 'rivestream', 'sflix', 'vidsrc', 'embed', '2embed'];
       const isKnownDirect = knownDirectDomains.some(d => domain.includes(d));
 

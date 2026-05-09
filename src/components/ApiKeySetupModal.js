@@ -9,10 +9,12 @@ import {
   ActivityIndicator,
   Linking,
   Platform,
+  Image,
 } from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import { Colors, FontSizes, BorderRadius, Spacing } from '../theme/colors';
 import { getApiKey, saveApiKey } from '../utils/storage';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
   const [apiKey, setApiKey] = useState('');
@@ -20,16 +22,30 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
   const [errorMsg, setErrorMsg] = useState('');
 
   const handleSave = async () => {
-    const key = apiKey.replace(/\s+/g, '');
+    // Deep scrub: Remove whitespace AND any non-alphanumeric characters (like hidden WhatsApp symbols)
+    const key = apiKey.trim().replace(/[^a-zA-Z0-9]/g, '');
     if (!key) return;
 
     setIsValidating(true);
     setErrorMsg('');
 
     try {
-      const res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${key}`);
+      // Primary Check: Configuration
+      let res = await fetch(`https://api.tmdb.org/3/configuration?api_key=${key}`);
+      
+      // Fallback Check: Popular Movies (if configuration fails)
       if (res.status === 401) {
-        setErrorMsg('Invalid API Key. Please check and try again.');
+        res = await fetch(`https://api.tmdb.org/3/movie/popular?api_key=${key}`);
+      }
+
+      const data = await res.json();
+
+      if (res.status !== 200) {
+        let msg = data.status_message || 'Invalid API Key. Please check and try again.';
+        if (key.length === 31) {
+          msg += ' (Note: standard keys are 32 chars)';
+        }
+        setErrorMsg(msg);
         setIsValidating(false);
         return;
       }
@@ -61,26 +77,62 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
           colors={[Colors.bgPrimary, Colors.bgSecondary]}
           style={styles.modalContent}>
 
-          <TouchableOpacity onPress={onSkip} style={styles.closeButton}>
-            <Text style={styles.closeButtonText}>✕</Text>
-          </TouchableOpacity>
-
-          <Text style={styles.title}>Welcome to StreamDeck 🎬</Text>
-          <View style={styles.subtitleContainer}>
-            <Text style={styles.subtitleParagraph}>
-              StreamDeck uses TMDB (The Movie Database) to power all movie posters, trending lists, and search results.
-            </Text>
-            <Text style={styles.subtitleParagraph}>
-              To get started, you need a free TMDB API key. It takes less than 2 minutes and you only have to do this once.
-            </Text>
-            <Text style={styles.subtitleParagraph}>
-              Without a key, you can still use Live TV and Settings.
-            </Text>
+          <View style={styles.modalHeader}>
+            <View style={styles.logoAndTitle}>
+              <Image 
+                source={require('../assets/images/logo.png')} 
+                style={styles.logo}
+                resizeMode="contain"
+              />
+              <Text style={styles.title}>StreamDeck</Text>
+            </View>
+            <TouchableOpacity onPress={onSkip} style={styles.closeAction}>
+              <Ionicons name="close" size={24} color="rgba(255, 255, 255, 0.4)" />
+            </TouchableOpacity>
           </View>
 
-          <Text style={styles.quickTip}>
-            <Text style={{ fontWeight: 'bold' }}>Quick Tip:</Text> When filling the TMDB API form, select "Developer" and simply type "Personal Use" or "N/A" for all the required fields (like App Name, URL, and Description) to skip the hassle!
-          </Text>
+          <View style={styles.featuresContainer}>
+            <View style={styles.featureItem}>
+              <View style={styles.featureIconBox}>
+                <Ionicons name="sync-outline" size={18} color={Colors.accentPurple} />
+              </View>
+              <Text style={styles.featureText}>Synchronize metadata and posters</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <View style={styles.featureIconBox}>
+                <Ionicons name="search-outline" size={18} color={Colors.accentPurple} />
+              </View>
+              <Text style={styles.featureText}>Real-time trending & search results</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <View style={styles.featureIconBox}>
+                <Ionicons name="flash-outline" size={18} color={Colors.accentPurple} />
+              </View>
+              <Text style={styles.featureText}>Instant one-time integration</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <View style={styles.featureIconBox}>
+                <Ionicons name="time-outline" size={18} color={Colors.accentPurple} />
+              </View>
+              <Text style={styles.featureText}>Setup completed in under 2 mins</Text>
+            </View>
+            <View style={styles.featureItem}>
+              <View style={styles.featureIconBox}>
+                <Ionicons name="hardware-chip-outline" size={18} color={Colors.accentPurple} />
+              </View>
+              <Text style={styles.featureText}>Powered by TMDB Infrastructure</Text>
+            </View>
+          </View>
+
+          <View style={styles.proTipCard}>
+            <View style={styles.tipHeader}>
+              <Ionicons name="bulb" size={16} color="#c084fc" />
+              <Text style={styles.proTipTitle}>Implementation Pro-Tip</Text>
+            </View>
+            <Text style={styles.proTipContent}>
+              Select <Text style={{ fontWeight: 'bold', color: '#fff' }}>"Developer"</Text> and use <Text style={{ fontWeight: 'bold', color: '#fff' }}>"Personal Use"</Text> to bypass manual approval queues.
+            </Text>
+          </View>
 
           <View style={[styles.inputContainer, errorMsg ? { borderColor: Colors.accentPink } : {}]}>
             <TextInput
@@ -101,27 +153,29 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
             <Text style={styles.errorText}>{errorMsg}</Text>
           ) : null}
 
-          <TouchableOpacity onPress={openTMDB} style={styles.linkButton}>
-            <Text style={styles.linkText}>Get your free API Key from TMDB</Text>
-          </TouchableOpacity>
+          <View style={styles.footerRow}>
+            <TouchableOpacity onPress={openTMDB} style={styles.secondaryAction}>
+              <Text style={styles.secondaryActionText}>Get API Key</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity
-            style={[styles.saveButtonContainer, (!apiKey.trim() || isValidating) && styles.saveButtonDisabled]}
-            onPress={handleSave}
-            disabled={!apiKey.trim() || isValidating}>
-            <LinearGradient
-              colors={[Colors.accentPurple, Colors.accentPink]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.saveButtonGradient}
-            >
-              {isValidating ? (
-                <ActivityIndicator color="#fff" size="small" />
-              ) : (
-                <Text style={styles.saveButtonText}>Save & Continue</Text>
-              )}
-            </LinearGradient>
-          </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.primaryAction, (!apiKey.trim() || isValidating) && styles.saveButtonDisabled]}
+              onPress={handleSave}
+              disabled={!apiKey.trim() || isValidating}>
+              <LinearGradient
+                colors={[Colors.accentPurple, Colors.accentPink]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.primaryActionGradient}
+              >
+                {isValidating ? (
+                  <ActivityIndicator color="#fff" size="small" />
+                ) : (
+                  <Text style={styles.saveButtonText}>Continue</Text>
+                )}
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
 
         </LinearGradient>
       </View>
@@ -139,106 +193,187 @@ const styles = StyleSheet.create({
   },
   modalContent: {
     width: '100%',
-    borderRadius: BorderRadius.xl,
+    borderRadius: 24,
     padding: Spacing.xl,
     borderWidth: 1,
-    borderColor: Colors.borderSubtle,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(12, 12, 22, 0.99)',
     elevation: 24,
-    shadowColor: Colors.accentPurple,
+    shadowColor: '#000',
     shadowOffset: { width: 0, height: 10 },
-    shadowOpacity: 0.3,
+    shadowOpacity: 0.5,
     shadowRadius: 20,
     position: 'relative',
+    overflow: 'hidden',
   },
-  closeButton: {
-    position: 'absolute',
-    top: Spacing.md,
-    right: Spacing.md,
-    width: 32,
-    height: 32,
+  modalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: Spacing.xl,
+    paddingRight: 4,
+  },
+  logoAndTitle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  closeAction: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     alignItems: 'center',
     justifyContent: 'center',
-    zIndex: 10,
   },
-  closeButtonText: {
-    color: Colors.textMuted,
-    fontSize: FontSizes.lg,
-    fontWeight: 'bold',
+  logo: {
+    width: 32,
+    height: 32,
   },
   title: {
-    color: Colors.textPrimary,
-    fontSize: FontSizes.xl,
-    fontWeight: 'bold',
-    marginBottom: Spacing.sm,
-    textAlign: 'center',
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+    letterSpacing: -1,
   },
-  subtitleContainer: {
-    marginBottom: Spacing.lg,
+  featuresContainer: {
+    marginBottom: Spacing.xl,
+    paddingHorizontal: 2,
   },
-  subtitleParagraph: {
-    color: Colors.textSecondary,
-    fontSize: FontSizes.sm,
-    lineHeight: 20,
-    marginBottom: Spacing.xs,
-    textAlign: 'center',
+  featureItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+    gap: 12,
   },
-  quickTip: {
-    fontSize: FontSizes.sm,
-    color: 'rgba(255,255,255,0.85)',
-    marginBottom: Spacing.lg,
-    lineHeight: 20,
-    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+  featureIconBox: {
+    width: 36,
+    height: 36,
+    borderRadius: 12,
+    backgroundColor: 'rgba(139, 92, 246, 0.12)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  featureText: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    letterSpacing: 0.1,
+  },
+  proTipCard: {
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(139, 92, 246, 0.3)',
-    padding: Spacing.sm,
-    borderRadius: BorderRadius.md,
+    borderColor: 'rgba(139, 92, 246, 0.25)',
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: Spacing.xl,
+  },
+  tipHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  proTipTitle: {
+    color: '#c084fc',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+  },
+  proTipContent: {
+    fontSize: 13,
+    color: 'rgba(255, 255, 255, 0.6)',
+    lineHeight: 18,
   },
   inputContainer: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: BorderRadius.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-    marginBottom: Spacing.md,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    marginBottom: 20,
   },
   input: {
     color: Colors.textPrimary,
-    paddingHorizontal: Spacing.lg,
-    paddingVertical: Platform.OS === 'android' ? 12 : 16,
-    fontSize: FontSizes.md,
+    paddingHorizontal: 20,
+    paddingVertical: Platform.OS === 'android' ? 14 : 18,
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  errorContainer: {
+    marginBottom: Spacing.md,
+    alignItems: 'center',
+    paddingHorizontal: 10,
   },
   errorText: {
     color: Colors.accentPink,
-    fontSize: FontSizes.sm,
+    fontSize: 13,
     textAlign: 'center',
-    marginBottom: Spacing.md,
+    fontWeight: '700',
+    marginBottom: 4,
   },
-  linkButton: {
-    paddingVertical: Spacing.sm,
-    marginBottom: Spacing.md,
+  debugText: {
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: 11,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+    marginBottom: 12,
+  },
+  forceSaveBtn: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  forceSaveText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 12,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  footerRow: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 12,
+    marginTop: 10,
   },
-  linkText: {
-    color: Colors.accentPink,
-    fontSize: FontSizes.sm,
-    fontWeight: '600',
-    textDecorationLine: 'underline',
+  secondaryAction: {
+    flex: 1,
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-  saveButtonContainer: {
-    borderRadius: BorderRadius.lg,
+  secondaryActionText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  primaryAction: {
+    flex: 1.4, // Make the continue button slightly more prominent
+    height: 52,
+    borderRadius: 14,
     overflow: 'hidden',
+    elevation: 8,
   },
-  saveButtonGradient: {
-    paddingVertical: 16,
+  primaryActionGradient: {
+    flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   saveButtonDisabled: {
-    backgroundColor: Colors.borderSubtle,
-    opacity: 0.5,
+    opacity: 0.4,
   },
   saveButtonText: {
-    color: Colors.textPrimary,
-    fontSize: FontSizes.md,
-    fontWeight: 'bold',
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5,
   },
 });
 
