@@ -4,8 +4,8 @@ import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 
 const {width, height} = Dimensions.get('window');
-const CARD_WIDTH = width * 0.80;
-const CARD_HEIGHT = height * 0.58;
+const CARD_WIDTH = width * 0.88;
+const CARD_HEIGHT = Math.min(CARD_WIDTH * 1.5, height * 0.65); // Cinematic Expansion Anchor
 
 const DiscoveryCard = ({item}) => {
   const [expanded, setExpanded] = useState(false);
@@ -21,44 +21,27 @@ const DiscoveryCard = ({item}) => {
 
   return (
     <View style={styles.card}>
-      <Image 
-        source={imgSrc} 
-        style={styles.image} 
-        resizeMode="cover" 
-        onError={() => setImgSrc({uri: FALLBACK_IMAGE})}
-      />
-      
-      <LinearGradient
-        colors={['transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.9)', '#000']}
-        locations={[0, 0.3, 0.7, 1]}
-        style={styles.gradient}
-      />
-      
+      <Image source={imgSrc} style={styles.image} resizeMode="cover" onError={() => setImgSrc({uri: FALLBACK_IMAGE})} />
+      <LinearGradient colors={['transparent', 'rgba(0,0,0,0.5)', 'rgba(0,0,0,0.9)', '#000']} locations={[0, 0.3, 0.7, 1]} style={styles.gradient} />
       <View style={[styles.badgeContainer, {left: Spacing.md, right: undefined}]}>
         <View style={styles.categoryBadge}>
-          <Text style={styles.categoryText}>
-            🍿 Movie {year ? `• ${year}` : ''}
-          </Text>
+          <Text style={styles.categoryText} allowFontScaling={false}>🍿 Movie {year ? `• ${year}` : ''}</Text>
         </View>
       </View>
-
       {rating ? (
         <View style={styles.badgeContainer}>
           <View style={[styles.categoryBadge, {backgroundColor: Colors.accentPink}]}>
-            <Text style={styles.categoryText}>⭐ {rating}</Text>
+            <Text style={styles.categoryText} allowFontScaling={false}>⭐ {rating}</Text>
           </View>
         </View>
       ) : null}
-
       <View style={styles.content}>
-        <Text style={styles.title} numberOfLines={2}>{item.title}</Text>
+        <Text style={styles.title} numberOfLines={1} allowFontScaling={false}>{item.title}</Text>
         <TouchableOpacity activeOpacity={0.9} onPress={() => setExpanded(!expanded)}>
-          <Text style={styles.snippet} numberOfLines={expanded ? undefined : 4}>
-            {item.overview || 'No synopsis available for this movie.'}
-          </Text>
-          {!expanded && item.overview && item.overview.length > 100 && (
-            <Text style={styles.readMore}>Read More...</Text>
-          )}
+          <Text style={styles.snippet} numberOfLines={expanded ? undefined : 3}>{item.overview || 'No synopsis available for this movie.'}</Text>
+          {(!expanded && item.overview && item.overview.length > 100) ? (
+            <Text style={styles.readMore} allowFontScaling={false}>Read More...</Text>
+          ) : null}
         </TouchableOpacity>
       </View>
     </View>
@@ -125,22 +108,22 @@ const styles = StyleSheet.create({
   },
   title: {
     color: Colors.textPrimary,
-    fontSize: 28,
+    fontSize: Math.min(width * 0.075, 32), // Proportional title
     fontWeight: '900',
-    marginBottom: 10,
-    lineHeight: 34,
+    marginBottom: 8,
+    lineHeight: Math.min(width * 0.085, 38),
     textShadowColor: 'rgba(0, 0, 0, 1)',
     textShadowOffset: {width: 0, height: 2},
     textShadowRadius: 10,
   },
   snippet: {
     color: '#fff',
-    fontSize: 16,
-    lineHeight: 24,
+    fontSize: Math.min(width * 0.04, 18), // Proportional snippet
+    lineHeight: Math.min(width * 0.06, 26),
     fontWeight: '600',
     textShadowColor: 'rgba(0, 0, 0, 1)',
     textShadowOffset: {width: 0, height: 2},
-    textShadowRadius: 15, // Stronger shadow
+    textShadowRadius: 15,
   },
   readMore: {
     color: Colors.accentPink,

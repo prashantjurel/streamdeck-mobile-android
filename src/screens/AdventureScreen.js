@@ -9,7 +9,8 @@ import {
   TouchableOpacity,
   Modal,
   Image,
-  Alert
+  Alert,
+  Dimensions
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -25,6 +26,7 @@ import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
 import {useApi} from '../context/ApiContext';
 
 const SAVED_ADVENTURES_KEY = 'streamdeck_mobile_adventure_saved';
+const {width, height} = Dimensions.get('window');
 
 const AdventureScreen = ({navigation, route}) => {
   const insets = useSafeAreaInsets();
@@ -35,12 +37,14 @@ const AdventureScreen = ({navigation, route}) => {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingPrefs, setLoadingPrefs] = useState(true);
+  const [lang, setLang] = useState('');
   const [prefs, setPrefs] = useState(null);
   const [page, setPage] = useState(1);
   const [showPicker, setShowPicker] = useState(false);
   const [isFetchingProviders, setIsFetchingProviders] = useState(false);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [selectedMovie, setSelectedMovie] = useState(null);
+  const [movieboxDomain, setMovieboxDomain] = useState('moviebox.pro'); // Re-added for global fallback stability
 
   // Refs
   const stackRef = useRef(null);
@@ -50,28 +54,18 @@ const AdventureScreen = ({navigation, route}) => {
 
   // ELITE HEADER
   const renderHeader = () => (
-    <View style={[styles.adventureHeader, { top: topPadding + 10 }]}>
-      <View style={{ flex: 1 }} /> {/* Adaptive left spacer */}
-      
+    <View style={styles.adventureHeader}>
+      <View style={{ flex: 0.8 }} /> 
       <View style={styles.headerTitleBox}>
-        <Text style={styles.headerTitle}>Adventure</Text>
-        <Text style={styles.headerSubtitle}>Personalized Discovery</Text>
+        <Text style={styles.headerTitle} allowFontScaling={false} numberOfLines={1}>Adventure</Text>
+        <Text style={styles.headerSubtitle} allowFontScaling={false}>Personalized Discovery</Text>
       </View>
-
-      <View style={{ flex: 1, alignItems: 'flex-end' }}>
+      <View style={{ alignItems: 'flex-end' }}>
         {prefs && (
-          <TouchableOpacity 
-            style={styles.vibeBtn}
-            onPress={() => navigation.navigate('AdventurePreferences')}
-            activeOpacity={0.7}
-          >
-            <LinearGradient
-              colors={['rgba(139, 92, 246, 0.4)', 'rgba(217, 70, 239, 0.4)']}
-              start={{x: 0, y: 0}}
-              end={{x: 1, y: 0}}
-              style={styles.vibeGradient}
-            >
-              <Text style={styles.editPrefs}>Change Vibe</Text>
+          <TouchableOpacity style={styles.vibeBtn} onPress={() => navigation.navigate('AdventurePreferences')} activeOpacity={0.7}>
+            <LinearGradient colors={[Colors.accentPurple, Colors.accentPink]} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.vibeGradient}>
+              <Icon name="tune" size={16} color="#fff" style={{ marginRight: 6 }} />
+              <Text style={styles.editPrefs} allowFontScaling={false}>Tune</Text>
             </LinearGradient>
           </TouchableOpacity>
         )}
@@ -117,11 +111,15 @@ const AdventureScreen = ({navigation, route}) => {
 
       // 2. Handle fresh results from a survey/mood picker
       if (routeGenreIds && routeGenreIds.length > 0 && isMoodBased) {
+        const routeLang = route.params?.selectedLanguage;
+        const currentLang = routeLang !== undefined ? routeLang : lang;
+        
         setPrefs(routeGenreIds);
+        if (routeLang !== undefined) setLang(routeLang);
         setCards([]);
         setCurrentIndex(0);
-        await loadContent(routeGenreIds, 1, true);
-        navigation.setParams({ isMoodBased: false });
+        await loadContent(routeGenreIds, 1, true, currentLang);
+        navigation.setParams({ isMoodBased: false, selectedLanguage: undefined });
         setLoadingPrefs(false);
         return;
       }
@@ -133,37 +131,57 @@ const AdventureScreen = ({navigation, route}) => {
       }
 
       // 4. Use the saved preferences to load content
-      const parsedPrefs = JSON.parse(saved);
-      if (parsedPrefs && Array.isArray(parsedPrefs) && parsedPrefs.length > 0) {
-        setPrefs(parsedPrefs);
-        await loadContent(parsedPrefs, 1, true);
-        setLoadingPrefs(false);
-        return;
-      }
-
-      // Fallback: Empty prefs array
-      navigation.replace('AdventurePreferences');
+      loadPreferences();
     } catch (e) {
-      console.error('[Adventure] Reset Sync Error:', e);
-      navigation.replace('AdventurePreferences');
+      console.error('[Adventure] Prefs error:', e);
+      loadContent([], 1, true, '');
+      setLoadingPrefs(false);
+    }
+  };
+
+  const loadPreferences = async () => {
+    setLoadingPrefs(true);
+    try {
+      const saved = await AsyncStorage.getItem('streamdeck_adventure_prefs');
+      const savedLang = await AsyncStorage.getItem('streamdeck_adventure_lang');
+      
+      const genreIds = saved ? JSON.parse(saved) : [];
+      setPrefs(genreIds);
+      
+      // Validate and stabilize the language ID
+      const stableLang = (savedLang === 'IN' || savedLang === 'global') ? savedLang : 'global';
+      setLang(stableLang);
+      
+      // Start loading content once prefs are ready
+      loadContent(genreIds, 1, true, stableLang);
+    } catch (e) {
+      console.error('[Adventure] Prefs error:', e);
+      loadContent([], 1, true, '');
     } finally {
       setLoadingPrefs(false);
     }
   };
 
-  const loadContent = async (genreIds, pageNum, reset = false) => {
-    if (!genreIds || genreIds.length === 0) return;
-    
+  const loadContent = async (genreIds, pageNum, reset = false, currentLang = lang) => {
     setLoading(true);
     try {
-      // Pick a random starting page on reset to ensure variety
-      const actualPage = reset ? Math.floor(Math.random() * 20) + 1 : pageNum;
-      if (reset) setPage(actualPage);
+      const data = await fetchMovieRecommendations(genreIds, pageNum, currentLang);
+      
+      if (reset && data.totalPages > 1 && pageNum === 1) {
+        // If we are on the first page of a reset, pick a truly random page from the total
+        const randomPage = Math.floor(Math.random() * Math.min(data.totalPages, 15)) + 1;
+        if (randomPage !== 1) {
+          const refinedData = await fetchMovieRecommendations(genreIds, randomPage, currentLang);
+          setCards(refinedData.results);
+          setPage(randomPage);
+          setLoading(false);
+          return;
+        }
+      }
 
-      const data = await fetchMovieRecommendations(genreIds, actualPage);
-      if (data && data.length > 0) {
-        setCards((prev) => reset ? data : [...prev, ...data]);
-        setPage(actualPage);
+      if (data.results && data.results.length > 0) {
+        setCards((prev) => reset ? data.results : [...prev, ...data.results]);
+        setPage(pageNum);
       }
     } catch (e) {
       if (e.message === 'INVALID_API_KEY') invalidateKey();
@@ -280,7 +298,7 @@ const AdventureScreen = ({navigation, route}) => {
       title, 
       tmdbId, 
       'movie', 
-      movieboxDomain, 
+      provider.customDomain || '', 
       navigation
     );
   };
@@ -288,163 +306,121 @@ const AdventureScreen = ({navigation, route}) => {
   const checkLoadMore = (index) => {
     // If we're getting close to the end of the current card pool, fetch more
     if (cards.length - index < 8) {
-      loadContent(prefs, page + 1, false);
+      loadContent(prefs, page + 1, false, lang);
     }
   };
 
-  const onSwipeAction = (direction, card, newIndex) => {
-    setCurrentIndex(newIndex);
-    checkLoadMore(newIndex);
-
-    if (direction === 'right') handleSwipeRight(card);
-    else if (direction === 'up') handleSwipeUp(card);
-  };
-
   return (
-    <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
+    <View style={[styles.screen, { paddingTop: topPadding }]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
       
       {renderHeader()}
-      
+
       {!hasKey ? (
         <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 30 }}>
           <Text style={{ fontSize: 40, marginBottom: 16 }}>🔑</Text>
-          <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>
-            One-Time Setup Required
-          </Text>
-          <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>
-            Adventure uses TMDB to discover and recommend movies based on your taste. This is a one-time setup, once saved, you won't be asked again.
-          </Text>
-          <TouchableOpacity
-            style={{ borderRadius: 12, overflow: 'hidden' }}
-            onPress={requestKey}
-          >
-            <LinearGradient
-              colors={[Colors.accentPurple, Colors.accentPink]}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={{ paddingVertical: 14, paddingHorizontal: 28 }}
-            >
+          <Text style={{ color: Colors.textPrimary, fontSize: 18, fontWeight: '700', textAlign: 'center', marginBottom: 8 }}>One-Time Setup Required</Text>
+          <Text style={{ color: Colors.textMuted, fontSize: 14, textAlign: 'center', lineHeight: 22, marginBottom: 24 }}>Adventure uses TMDB to discover and recommend movies based on your taste. This is a one-time setup, once saved, you won't be asked again.</Text>
+          <TouchableOpacity style={{ borderRadius: 12, overflow: 'hidden' }} onPress={requestKey}>
+            <LinearGradient colors={[Colors.accentPurple, Colors.accentPink]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={{ paddingVertical: 14, paddingHorizontal: 28 }}>
               <Text style={{ color: '#fff', fontWeight: '700', fontSize: 15, textAlign: 'center' }}>Set Up API Key</Text>
             </LinearGradient>
           </TouchableOpacity>
         </View>
       ) : (
-        <>
+        <View style={{ flex: 1, justifyContent: 'space-between' }}>
           <View style={styles.container}>
-        {(loading || loadingPrefs) && cards.length === 0 ? (
-          <View style={styles.center}>
-            <ActivityIndicator size="large" color={Colors.accentPurple} />
-            <Text style={styles.loadingText}>Curating your feed...</Text>
+            {loading || loadingPrefs ? (
+              <View style={styles.center}>
+                <ActivityIndicator size="large" color={Colors.accentPurple} />
+                <Text style={styles.loadingText}>Curating your feed...</Text>
+              </View>
+            ) : cards.length === 0 ? (
+              <View style={styles.center}>
+                <Icon name="movie-off-outline" size={80} color="rgba(255,255,255,0.1)" />
+                <Text style={[styles.loadingText, { color: '#fff', fontSize: 20, marginTop: 24 }]}>No Movies Found</Text>
+                <Text style={{ color: 'rgba(255,255,255,0.4)', textAlign: 'center', paddingHorizontal: 40, marginTop: 12, lineHeight: 22 }}>
+                  Your current filters are a bit too specific. Try adjusting your "Tune" settings to discover more.
+                </Text>
+                <TouchableOpacity 
+                  style={styles.retryBtn} 
+                  onPress={() => navigation.navigate('AdventurePreferences')}
+                >
+                  <LinearGradient colors={[Colors.accentPurple, Colors.accentPink]} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={styles.retryGradient}>
+                    <Text style={styles.retryText}>Adjust Filters</Text>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              <View style={styles.stackOuter}>
+                <AdventureStack 
+                  ref={stackRef}
+                  data={cards} 
+                  currentIndex={currentIndex}
+                  setCurrentIndex={(val) => {
+                    const nextIdx = typeof val === 'function' ? val(currentIndex) : val;
+                    setCurrentIndex(nextIdx);
+                    checkLoadMore(nextIdx);
+                  }}
+                  onSwipeLeft={() => checkLoadMore(currentIndex + 1)}
+                  onSwipeRight={(card) => handleSwipeRight(card)}
+                  onSwipeUp={(card) => handleSwipeUp(card)}
+                />
+              </View>
+            )}
           </View>
-        ) : (
-          <View style={styles.stackOuter}>
-            <AdventureStack 
-              ref={stackRef}
-              data={cards} 
-              currentIndex={currentIndex}
-              setCurrentIndex={(val) => {
-                const nextIdx = typeof val === 'function' ? val(currentIndex) : val;
-                setCurrentIndex(nextIdx);
-                checkLoadMore(nextIdx);
-              }}
-              onSwipeLeft={() => checkLoadMore(currentIndex + 1)}
-              onSwipeRight={(card) => handleSwipeRight(card)}
-              onSwipeUp={(card) => handleSwipeUp(card)}
-            />
-          </View>
-        )}
-      </View>
 
-      <View style={styles.controls}>
-        <TouchableOpacity 
-          style={[styles.btn, styles.skipBtn]} 
-          onPress={() => stackRef.current?.swipeLeft()}
-          activeOpacity={0.7}
-        >
-          <Icon name="close" size={28} color="#FF3366" />
-        </TouchableOpacity>
-
-        <TouchableOpacity 
-          onPress={() => stackRef.current?.swipeUp()}
-          activeOpacity={0.8}
-        >
-          <LinearGradient
-            colors={[Colors.accentPurple, Colors.accentPink]}
-            start={{x: 0, y: 0}}
-            end={{x: 1, y: 0}}
-            style={[styles.btn, styles.exploreBtn]}
-          >
-            <Icon name="play" size={22} color="#fff" />
-            <Text style={styles.exploreText}>Watch Now</Text>
-          </LinearGradient>
-        </TouchableOpacity>
-        <TouchableOpacity 
-          style={[styles.btn, styles.saveBtn]} 
-          onPress={() => stackRef.current?.swipeRight()}
-          activeOpacity={0.7}
-        >
-          <Icon name="bookmark-outline" size={28} color="#00FF99" />
-        </TouchableOpacity>
-      </View>
-    </>
-  )}
-
-  {/* Watch Providers Modal */}
-      <Modal
-        visible={showPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowPicker(false)}>
+          {cards.length > 0 && !loading && (
+            <View style={[styles.controls, { paddingBottom: insets.bottom + 80 }]}>
+              <TouchableOpacity style={[styles.btn, styles.skipBtn]} onPress={() => stackRef.current?.swipeLeft()} activeOpacity={0.7}>
+                <Icon name="close" size={28} color="#FF3366" />
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => stackRef.current?.swipeUp()} activeOpacity={0.8}>
+                <LinearGradient colors={[Colors.accentPurple, Colors.accentPink]} start={{x: 0, y: 0}} end={{x: 1, y: 0}} style={[styles.btn, styles.exploreBtn]}>
+                  <Icon name="play" size={22} color="#fff" />
+                  <Text style={styles.exploreText} allowFontScaling={false}>Watch Now</Text>
+                </LinearGradient>
+              </TouchableOpacity>
+              <TouchableOpacity style={[styles.btn, styles.saveBtn]} onPress={() => stackRef.current?.swipeRight()} activeOpacity={0.7}>
+                <Icon name="bookmark-outline" size={28} color="#00FF99" />
+              </TouchableOpacity>
+            </View>
+          )}
+        </View>
+      )}
+      <Modal visible={showPicker} transparent animationType="fade" onRequestClose={() => setShowPicker(false)}>
         <View style={styles.modalOverlay}>
           <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
           <View style={styles.modalContent}>
-             <View style={styles.modalHeader}>
-                <View style={styles.modalHandle} />
-                <Text style={styles.modalTitle}>Available On</Text>
-                <Text style={styles.modalSubtitle}>Select where to stream {selectedMovie?.title}</Text>
-             </View>
-             
-              <View style={styles.providerGrid}>
-                {isFetchingProviders ? (
-                  <View style={styles.modalLoading}>
-                    <ActivityIndicator size="small" color={Colors.accentPurple} />
-                    <Text style={styles.modalLoadingText}>Curating streams...</Text>
-                  </View>
-                ) : (
-                  availableProviders.map(provider => (
-                    <TouchableOpacity 
-                      key={provider.id} 
-                      style={styles.providerItem}
-                      onPress={() => handleSelectProvider(provider)}
-                      activeOpacity={0.7}
-                    >
-                      <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
-                        {provider.logoUrl ? (
-                          <Image
-                            source={{uri: provider.logoUrl}}
-                            style={styles.providerLogo}
-                            resizeMode="contain"
-                          />
-                        ) : (
-                          <Icon name={provider.icon} size={32} color="#fff" />
-                        )}
-                      </View>
-                      <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                    </TouchableOpacity>
-                  ))
-                )}
-                
-                {!isFetchingProviders && availableProviders.length > 0 && availableProviders.every(p => p.id === 'moviebox' || p.id === 'youtube') && (
-                  <View style={styles.noProvidersBox}>
-                    <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing MovieBox and YouTube as fallbacks.</Text>
-                  </View>
-                )}
-              </View>
-
-             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
-                <Text style={styles.closeModalText}>Cancel</Text>
-             </TouchableOpacity>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Available On</Text>
+              <Text style={styles.modalSubtitle}>Select where to stream {selectedMovie?.title}</Text>
+            </View>
+            <View style={styles.providerGrid}>
+              {isFetchingProviders ? (
+                <View style={styles.modalLoading}>
+                  <ActivityIndicator size="small" color={Colors.accentPurple} />
+                  <Text style={styles.modalLoadingText}>Curating streams...</Text>
+                </View>
+              ) : (
+                availableProviders.map(provider => (
+                  <TouchableOpacity key={provider.id} style={styles.providerItem} onPress={() => handleSelectProvider(provider)} activeOpacity={0.7}>
+                    <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
+                      {provider.logoUrl ? (
+                        <Image source={{uri: provider.logoUrl}} style={styles.providerLogo} resizeMode="contain" />
+                      ) : (
+                        <Icon name={provider.icon} size={32} color="#fff" />
+                      )}
+                    </View>
+                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
+            </View>
+            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
+              <Text style={styles.closeModalText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
@@ -454,65 +430,74 @@ const AdventureScreen = ({navigation, route}) => {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.bgPrimary },
-  header: { paddingHorizontal: Spacing.xl, paddingBottom: Spacing.md },
-  title: { fontSize: 34, fontWeight: '900', color: Colors.textPrimary, letterSpacing: -1 },
-  badgeRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16 },
-  subtitle: { fontSize: 12, color: Colors.accentPink, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 1 },
-  vibeBtn: { borderRadius: 12, overflow: 'hidden' },
-  vibeGradient: { paddingHorizontal: 10, paddingVertical: 5 },
-  editPrefs: { fontSize: 11, color: '#fff', fontWeight: '800', textTransform: 'uppercase' },
+  vibeBtn: { 
+    borderRadius: 20, 
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
+    elevation: 10,
+    shadowColor: Colors.accentPurple,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 5,
+  },
+  vibeGradient: { 
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16, 
+    paddingVertical: 8 
+  },
+  editPrefs: { fontSize: 13, color: '#fff', fontWeight: '900', textTransform: 'uppercase', letterSpacing: 1.2 },
   adventureHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: 20,
-    marginBottom: 20,
-    zIndex: 100,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    paddingBottom: 20, // Rigid cinematic offset
+    zIndex: 10,
+    backgroundColor: Colors.bgPrimary,
   },
   headerTitleBox: {
+    flex: 3,
     alignItems: 'center',
+    justifyContent: 'center',
   },
   headerTitle: {
     color: '#fff',
-    fontSize: 22,
+    fontSize: Math.min(width * 0.06, 22), // Proportional title
     fontWeight: 'bold',
     letterSpacing: 0.5,
+    textAlign: 'center',
   },
   headerSubtitle: {
     color: Colors.accentPink,
     fontSize: 10,
     fontWeight: 'bold',
     textTransform: 'uppercase',
+    textAlign: 'center',
   },
   container: { 
     flex: 1, 
-    justifyContent: 'center', // This ensures equal vertical gaps
-    paddingBottom: 20, 
+    justifyContent: 'center', 
   },
   stackOuter: {
     height: '100%',
     justifyContent: 'center',
   },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center' },
-  loadingText: { color: Colors.textMuted, marginTop: Spacing.md, fontSize: FontSizes.md, fontWeight: '600' },
+  center: { flex: 1, justifyContent: 'center', alignItems: 'center', paddingBottom: 40 },
+  loadingText: { color: Colors.textMuted, marginTop: Spacing.md, fontSize: FontSizes.md, fontWeight: '700' },
+  retryBtn: { marginTop: 32, borderRadius: 20, overflow: 'hidden' },
+  retryGradient: { paddingHorizontal: 32, paddingVertical: 14 },
+  retryText: { color: '#fff', fontWeight: '900', fontSize: 16, textTransform: 'uppercase' },
   controls: { 
     flexDirection: 'row', 
     justifyContent: 'center', 
     alignItems: 'center',
     paddingHorizontal: Spacing.xl, 
-    paddingBottom: 110, 
     gap: 16 
   },
   btn: { 
-    height: 60, 
+    height: Math.min(width * 0.16, 60), // Proportional height
     borderRadius: 30, 
     justifyContent: 'center', 
     alignItems: 'center', 
@@ -520,8 +505,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255, 255, 255, 0.03)',
   },
   skipBtn: { 
-    width: 64,
-    height: 64,
+    width: Math.min(width * 0.17, 64), // Proportional diameter
+    height: Math.min(width * 0.17, 64),
     borderRadius: 32,
     borderColor: '#F43F5E', 
     borderWidth: 2,
@@ -533,8 +518,8 @@ const styles = StyleSheet.create({
     elevation: 12,
   },
   saveBtn: { 
-    width: 64,
-    height: 64,
+    width: Math.min(width * 0.17, 64), // Proportional diameter
+    height: Math.min(width * 0.17, 64),
     borderRadius: 32,
     borderColor: '#10B981', 
     borderWidth: 2,
@@ -547,7 +532,8 @@ const styles = StyleSheet.create({
   },
   exploreBtn: { 
     flexDirection: 'row',
-    paddingHorizontal: 36,
+    height: Math.min(width * 0.16, 60), // Proportional height
+    paddingHorizontal: width * 0.08,
     borderWidth: 1.5,
     borderColor: 'rgba(255, 255, 255, 0.2)',
     gap: 10,
@@ -559,13 +545,10 @@ const styles = StyleSheet.create({
   },
   exploreText: {
     color: '#fff',
-    fontSize: 16,
+    fontSize: Math.min(width * 0.045, 16), // Proportional font
     fontWeight: '900',
     letterSpacing: 0.5,
   },
-  btnText: { fontSize: 14, fontWeight: '800', color: Colors.textPrimary, textTransform: 'uppercase' },
-
-  // Modal Styles
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalDismissZone: { flex: 1 },
   modalContent: { backgroundColor: '#16161E', borderTopLeftRadius: 28, borderTopRightRadius: 28, paddingHorizontal: Spacing.xl, paddingTop: Spacing.md, paddingBottom: 44, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)', elevation: 24, shadowColor: '#000', shadowOffset: {width: 0, height: -8}, shadowOpacity: 0.4, shadowRadius: 20 },
@@ -577,7 +560,6 @@ const styles = StyleSheet.create({
   providerItem: { width: 86, alignItems: 'center', marginBottom: Spacing.sm },
   providerIconBox: { width: 64, height: 64, borderRadius: 16, justifyContent: 'center', alignItems: 'center', marginBottom: 8, overflow: 'hidden', elevation: 6, borderWidth: 1, borderColor: 'rgba(255,255,255,0.08)' },
   providerLogo: { width: 44, height: 44, borderRadius: 8 },
-  providerIconText: { fontSize: 28, fontWeight: '900', color: '#fff' },
   providerName: { fontSize: 11, fontWeight: '700', color: 'rgba(255,255,255,0.75)', textAlign: 'center' },
   modalLoading: {
     padding: 30,
@@ -592,19 +574,6 @@ const styles = StyleSheet.create({
   },
   closeModalBtn: { marginTop: 8, paddingVertical: 14, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16 },
   closeModalText: { fontSize: 15, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
-  noProvidersBox: {
-    width: '100%',
-    padding: Spacing.md,
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 12,
-    marginTop: -4,
-  },
-  noProvidersText: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 12,
-    textAlign: 'center',
-    lineHeight: 18,
-  },
 });
 
 export default AdventureScreen;

@@ -28,8 +28,8 @@ import { getImageUrl } from '../services/tmdb';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const CARD_HEIGHT = 520;
-const ANIM_DURATION = 400;
-const AUTO_PLAY_MS = 5000;
+const ANIM_DURATION = 1200;
+const AUTO_PLAY_MS = 8000;
 
 // ═══════════════════════════════════════════════════════════
 // BlinkingLiveBadge — Animated pulsing red badge
@@ -193,9 +193,33 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
         {/* Left: tag + title + meta */}
         <View style={styles.textCol}>
           {isSports ? (
-            <BlinkingLiveBadge />
+            movie.match?.status === 'soon' ? (
+              <View style={styles.trendingBadge}>
+                <LinearGradient
+                  colors={['#f59e0b', '#d97706']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.trendingGradient}
+                >
+                  <Ionicons name="time" size={10} color="#fff" style={{ marginRight: 4 }} />
+                  <Text style={styles.trendingText}>Starting Soon</Text>
+                </LinearGradient>
+              </View>
+            ) : (
+              <BlinkingLiveBadge />
+            )
           ) : (
-            <Text style={styles.trendingTag}>Trending Now</Text>
+            <View style={styles.trendingBadge}>
+              <LinearGradient
+                colors={[Colors.accentPurple, Colors.accentPink]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.trendingGradient}
+              >
+                <Ionicons name="flame" size={10} color="#fff" style={{ marginRight: 4 }} />
+                <Text style={styles.trendingText}>Trending Now</Text>
+              </LinearGradient>
+            </View>
           )}
 
           <Text
@@ -317,22 +341,21 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
       setActiveIndex(uiIdx);
     }
 
-    animIndex.value = withSpring(idx, {
-      damping: 20,
-      stiffness: 90,
-      mass: 0.5,
-      velocity: velocity,
+    // Use withTiming for exactly controlled smooth swipe duration
+    animIndex.value = withTiming(idx, {
+      duration: ANIM_DURATION,
+      easing: Easing.inOut(Easing.quad),
     });
   }, [animIndex]);
 
   // ── Auto-play ────────────────────────────────────────
   const startAuto = useCallback(() => {
     clearInterval(timerRef.current);
-    if (movies.length <= 1) return;
+    if (movies.length <= 1 || paused) return;
     timerRef.current = setInterval(() => {
       goTo(activeRef.current + 1);
     }, AUTO_PLAY_MS);
-  }, [movies.length, goTo]);
+  }, [movies.length, goTo, paused]);
 
   useEffect(() => {
     startAuto();
@@ -351,8 +374,13 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
   const panResponder = useRef(
     PanResponder.create({
       onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) =>
-        Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.2,
+      onMoveShouldSetPanResponder: (_, g) => {
+        // Only claim the gesture if the user is clearly swiping left/right
+        return Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
+      },
+      // IMPORTANT: Once we claim the horizontal swipe, DO NOT let the vertical ScrollView steal it!
+      // This prevents the "stuck mid-air" freeze bug on Android.
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: () => {
         clearInterval(timerRef.current);
       },
@@ -361,8 +389,7 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
         animIndex.value = activeRef.current - delta;
       },
       onPanResponderRelease: (_, g) => {
-        const currentMovies = moviesRef.current;
-        const velocity = g.vx;
+        const velocity = g.vx || 0;
         const dragThreshold = SCREEN_WIDTH * 0.2;
         
         let targetIdx = activeRef.current;
@@ -376,6 +403,18 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
         // Circular behavior: no clamping needed here, 
         // goTo handles infinite indexing
         goTo(targetIdx, velocity);
+        startAuto();
+      },
+      onPanResponderTerminate: (_, g) => {
+        // If gesture is cancelled mid-swipe (e.g. parent ScrollView takes over),
+        // we must force snap it to the nearest index so it doesn't freeze in between cards!
+        let targetIdx = activeRef.current;
+        if (g.dx && g.dx < - (SCREEN_WIDTH * 0.2)) {
+          targetIdx = activeRef.current + 1;
+        } else if (g.dx && g.dx > (SCREEN_WIDTH * 0.2)) {
+          targetIdx = activeRef.current - 1;
+        }
+        goTo(targetIdx, g.vx || 0);
         startAuto();
       },
     }),
@@ -499,15 +538,32 @@ const styles = StyleSheet.create({
   },
 
   // ── Tags ────────────────────────────────────────────
-  trendingTag: {
-    color: Colors.accentPurple,
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-    marginBottom: 6,
-    textShadowColor: 'rgba(0,0,0,0.5)',
+  trendingBadge: {
+    alignSelf: 'flex-start',
+    marginBottom: 8,
+    borderRadius: 6,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: Colors.accentPink,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+  },
+  trendingGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  trendingText: {
+    color: '#fff',
+    fontSize: 9.5,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    textShadowColor: 'rgba(0,0,0,0.2)',
     textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    textShadowRadius: 2,
   },
   liveBadgeContainer: {
     flexDirection: 'row',

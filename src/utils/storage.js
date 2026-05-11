@@ -75,10 +75,6 @@ export async function loadWatchlist() {
 export async function saveWatchlist(items) {
   try {
     await AsyncStorage.setItem(KEYS.WATCHLIST, JSON.stringify(items));
-    
-    // Background sync if user is logged in
-    const user = getCurrentUser();
-    if (user) pushToCloud(user.uid);
   } catch (e) {
     console.warn('[Storage] Failed to save watchlist:', e);
   }
@@ -171,6 +167,14 @@ export async function loadSettings() {
       }));
     }
 
+    // SOVEREIGN SANITIZATION: Brute-force Keyword Purge
+    Object.keys(settings).forEach(key => {
+      const lowerKey = key.toLowerCase();
+      if (lowerKey.includes('apikey') || lowerKey.includes('tmdb')) {
+        delete settings[key];
+      }
+    });
+
     return settings;
   } catch (e) {
     return getDefaultSettings();
@@ -180,10 +184,6 @@ export async function loadSettings() {
 export async function saveSettings(settings) {
   try {
     await AsyncStorage.setItem(KEYS.SETTINGS, JSON.stringify(settings));
-    
-    // Background sync if user is logged in
-    const user = getCurrentUser();
-    if (user) pushToCloud(user.uid);
   } catch (e) {
     console.warn('[Storage] Failed to save settings:', e);
   }
@@ -191,7 +191,6 @@ export async function saveSettings(settings) {
 
 export function getDefaultSettings() {
   return {
-    tmdbApiKey: '',
     movieboxSources: [
       { name: 'Cineby', url: 'cineby.sc', enabled: true },
       { name: 'MovieBox', url: 'moviebox.mov', enabled: false }

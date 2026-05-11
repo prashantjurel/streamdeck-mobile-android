@@ -1,14 +1,19 @@
 // StreamDeck Mobile — Section Header Component
 import React from 'react';
-import {View, Text, StyleSheet} from 'react-native';
+import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing} from '../theme/colors';
 
-const SectionHeader = ({title, subtitle, style, rightAction}) => {
+const SectionHeader = ({title, subtitle, style, rightAction, onPress, showChevron}) => {
   return (
     <View style={[styles.container, style]}>
       <View style={styles.titleRow}>
-        <View style={styles.leftTitleRow}>
+        <TouchableOpacity 
+          style={styles.leftTitleRow} 
+          onPress={onPress}
+          disabled={!onPress}
+          activeOpacity={0.7}
+        >
           <LinearGradient
             colors={[Colors.accentPurple, Colors.accentPink]}
             start={{x: 0, y: 0}}
@@ -16,7 +21,12 @@ const SectionHeader = ({title, subtitle, style, rightAction}) => {
             style={styles.accentBar}
           />
           <Text style={styles.title}>{title}</Text>
-        </View>
+          {showChevron && (
+            <Text style={{ marginLeft: 6, color: Colors.accentPink, fontSize: 18, fontWeight: '700', marginTop: 2 }}>
+              ˅
+            </Text>
+          )}
+        </TouchableOpacity>
         {rightAction && <View style={styles.rightAction}>{rightAction}</View>}
       </View>
       {subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}

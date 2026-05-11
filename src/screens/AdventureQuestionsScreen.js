@@ -67,7 +67,8 @@ const MOOD_FLOW = {
   }
 };
 
-const AdventureQuestionsScreen = ({navigation}) => {
+const AdventureQuestionsScreen = ({navigation, route}) => {
+  const { selectedLanguage } = route.params || {};
   const [currentStep, setCurrentStep] = useState('initial');
   const [collectedGenres, setCollectedGenres] = useState([]);
 
@@ -84,17 +85,26 @@ const AdventureQuestionsScreen = ({navigation}) => {
       const uniqueGenres = [...new Set(newGenres)];
       
       // PERSIST: Save these as the current adventure prefs so the tab remembers
-      try {
-        const AsyncStorage = require('@react-native-async-storage/async-storage').default;
-        AsyncStorage.setItem('streamdeck_adventure_prefs', JSON.stringify(uniqueGenres));
-      } catch (e) {
-        console.error('[Adventure] Failed to persist mood prefs:', e);
-      }
+      const saveAndNavigate = async () => {
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          await AsyncStorage.setItem('streamdeck_adventure_prefs', JSON.stringify(uniqueGenres));
+          if (selectedLanguage !== undefined) {
+            await AsyncStorage.setItem('streamdeck_adventure_lang', selectedLanguage);
+          }
+          
+          navigation.navigate('AdventureMain', { 
+            genreIds: uniqueGenres,
+            isMoodBased: true,
+            selectedLanguage: selectedLanguage
+          });
+        } catch (e) {
+          console.error('[Adventure] Failed to persist mood prefs:', e);
+          navigation.navigate('AdventureMain');
+        }
+      };
       
-      navigation.navigate('AdventureMain', { 
-        genreIds: uniqueGenres,
-        isMoodBased: true
-      });
+      saveAndNavigate();
     }
   };
 

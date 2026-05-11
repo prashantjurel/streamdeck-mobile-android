@@ -7,6 +7,7 @@ import {GestureHandlerRootView} from 'react-native-gesture-handler';
 import RootNavigator from './src/navigation/BottomTabNavigator';
 import {ApiProvider} from './src/context/ApiContext';
 import {Colors} from './src/theme/colors';
+import {configureGoogleSignIn} from './src/services/auth';
 
 // Suppress known harmless warnings
 LogBox.ignoreLogs([
@@ -15,6 +16,11 @@ LogBox.ignoreLogs([
 ]);
 
 const App = () => {
+  useEffect(() => {
+    // Initialize Google Sign-In immediately so the onboarding modal can use it
+    configureGoogleSignIn();
+  }, []);
+
   return (
     <GestureHandlerRootView style={styles.container}>
       <SafeAreaProvider>

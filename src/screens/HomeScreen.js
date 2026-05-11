@@ -35,7 +35,7 @@ import { Colors, Spacing } from '../theme/colors';
 import HeroSpotlight from '../components/HeroSpotlight';
 import ContinueWatchingRow from '../components/ContinueWatchingRow';
 import TrendingRow from '../components/TrendingRow';
-import { fetchTrendingContent, fetchWatchProviders, getImageUrl } from '../services/tmdb';
+import { fetchTrendingContent, fetchWatchProviders, getImageUrl, OTT_PROVIDERS, fetchProviderContent } from '../services/tmdb';
 import { loadContinueWatching, loadSettings, toggleWatchlistItem, loadWatchlist } from '../utils/storage';
 import UpdateModal from '../components/UpdateModal';
 import { fetchLiveSportsData } from '../services/sports';
@@ -214,8 +214,10 @@ const HomeScreen = ({ navigation }) => {
   // ─── STABLE HOOK BLOCK ──────────────────────────────────────────
   const [globalTrending, setGlobalTrending] = useState([]);
   const [localTrending, setLocalTrending] = useState([]);
-  const [netflixTrending, setNetflixTrending] = useState([]);
-  const [primeTrending, setPrimeTrending] = useState([]);
+  const [providerTrendingCache, setProviderTrendingCache] = useState({});
+  const [activeProvider, setActiveProvider] = useState(OTT_PROVIDERS[0]);
+  const [showProviderDropdown, setShowProviderDropdown] = useState(false);
+  const [loadingProvider, setLoadingProvider] = useState(false);
   const [regionName, setRegionName] = useState('India');
   const [continueWatching, setContinueWatching] = useState([]);
   const [heroItems, setHeroItems] = useState([]);
@@ -231,16 +233,19 @@ const HomeScreen = ({ navigation }) => {
   const [movieboxSources, setMovieboxSources] = useState([]);
   const [selectedMediaType, setSelectedMediaType] = useState('all'); // 'all', 'movie', 'tv'
   const [watchlist, setWatchlist] = useState([]);
+  const [regionCode, setRegionCode] = useState('IN');
 
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
   const bottomPadding = insets.bottom || 20;
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     try {
+      setLoading(true);
       // Load region
       const settings = await loadSettings();
       const region = settings.contentRegion || 'IN';
+      setRegionCode(region);
       setCustomProviders(settings.liveSportsProviders || []);
       setMovieboxSources(settings.movieboxSources || []);
       const wl = await loadWatchlist();
@@ -256,11 +261,15 @@ const HomeScreen = ({ navigation }) => {
       setRegionName(REGION_NAMES[region] || region);
 
       // Load trending content
-      const { global, local, netflix, prime } = await fetchTrendingContent(region);
+      const { global, local } = await fetchTrendingContent(region, forceRefresh);
       setGlobalTrending(global);
       setLocalTrending(local);
-      setNetflixTrending(netflix);
-      setPrimeTrending(prime);
+
+      // Load initial active provider
+      if (!providerTrendingCache[activeProvider.id] || forceRefresh) {
+        const pData = await fetchProviderContent(region, activeProvider.id);
+        setProviderTrendingCache(prev => ({ ...prev, [activeProvider.id]: pData }));
+      }
 
       let heroSports = [];
       try {
@@ -270,7 +279,7 @@ const HomeScreen = ({ navigation }) => {
         ];
 
         const livePreferredMatches = matches.filter(m => {
-          if (m.status !== 'LIVE') return false;
+          if (m.status !== 'LIVE' && m.status !== 'soon') return false;
           const lowerTitle = m.title.toLowerCase();
           return preferredLeagues.some(league => lowerTitle.includes(league));
         });
@@ -295,7 +304,7 @@ const HomeScreen = ({ navigation }) => {
             title: match.title,
             vote_average: 10.0,
             release_date: new Date().toISOString(),
-            overview: `LIVE NOW • Watch ${match.title}`,
+            overview: match.status === 'soon' ? `STARTING SOON • Watch ${match.title}` : `LIVE NOW • Watch ${match.title}`,
             isSports: true,
             match: match,
             backdrop_path: backdrop,
@@ -348,7 +357,7 @@ const HomeScreen = ({ navigation }) => {
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
-    loadData();
+    loadData(true); // FORCE REFRESH
   }, [loadData]);
 
   const getCustomProviderAppearance = (name, url) => {
@@ -446,9 +455,9 @@ const HomeScreen = ({ navigation }) => {
             seenIds.add(mapped.id);
             streamingProviders.push({
               ...mapped,
-              logoUrl: p.logo_path ? `https://image.tmdb.org/t/p/w200${p.logo_path}` : null,
-              icon: 'tv',
-              color: '#333',
+              logoUrl: p.logo_path 
+                ? `https://image.tmdb.org/t/p/w200${p.logo_path}` 
+                : mapped.logoUrl || null,
             });
           }
         });
@@ -474,12 +483,13 @@ const HomeScreen = ({ navigation }) => {
         });
 
       // Always Add YouTube as Primary Hub
+      const ytEntry = OTT_PROVIDER_MAP['youtube'] || {};
       streamingProviders.push({
         id: 'youtube',
         name: 'YouTube',
         icon: 'youtube',
         color: '#FF0000',
-        logoUrl: null,
+        logoUrl: ytEntry.logoUrl || null,
         searchUrl: 'https://www.youtube.com/results?search_query=',
         appScheme: 'youtube://',
       });
@@ -534,6 +544,21 @@ const HomeScreen = ({ navigation }) => {
         color: redirectInfo.provider.color || '#333',
         type: 'moviebox',
       });
+    }
+  };
+
+  const handleProviderSelect = async (provider) => {
+    setActiveProvider(provider);
+    setShowProviderDropdown(false);
+    
+    // Check cache
+    if (!providerTrendingCache[provider.id]) {
+      setLoadingProvider(true);
+      const settings = await loadSettings();
+      const region = settings.contentRegion || 'IN';
+      const data = await fetchProviderContent(region, provider.id);
+      setProviderTrendingCache(prev => ({ ...prev, [provider.id]: data }));
+      setLoadingProvider(false);
     }
   };
 
@@ -665,34 +690,75 @@ const HomeScreen = ({ navigation }) => {
         {/* What's Trending Globally */}
         <TrendingRow
           title="What's Trending Globally"
-          movies={globalTrending.slice(0, 15)}
+          movies={globalTrending}
           onMoviePress={handlePlayPress}
         />
 
         {/* What's Trending in India / US / etc */}
         <TrendingRow
           title={`What's Trending in ${regionName}`}
-          movies={localTrending.slice(0, 15)}
+          movies={localTrending}
           onMoviePress={handlePlayPress}
         />
 
-        {/* Trending on Netflix */}
-        <TrendingRow
-          title="Trending on Netflix"
-          movies={netflixTrending.slice(0, 15)}
-          onMoviePress={handlePlayPress}
-        />
-
-        {/* Trending on Prime Video */}
-        <TrendingRow
-          title="Trending on Prime Video"
-          movies={primeTrending.slice(0, 15)}
-          onMoviePress={handlePlayPress}
-        />
+        {/* Provider Trending Row */}
+        <View style={{ marginBottom: Spacing.xl }}>
+          <TrendingRow
+            title={`Trending on ${activeProvider.name}`}
+            onTitlePress={() => setShowProviderDropdown(true)}
+            showChevron={true}
+            movies={providerTrendingCache[activeProvider.id] || []}
+            isLoading={loadingProvider}
+            onMoviePress={handlePlayPress}
+            style={{ marginBottom: 0 }}
+          />
+        </View>
 
         {/* Bottom padding for tab bar */}
         <View style={styles.bottomPadding} />
       </ScrollView>
+
+      {/* Provider Dropdown Modal */}
+      <Modal
+        visible={showProviderDropdown}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowProviderDropdown(false)}>
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowProviderDropdown(false)} activeOpacity={1} />
+          <View style={[styles.modalContent, { paddingBottom: 20 }]}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Select Provider</Text>
+            </View>
+            <View style={{ marginTop: 10 }}>
+              {OTT_PROVIDERS.filter(p => !p.regions || (p.regions.includes('global') && !p.regions.includes(`!${regionCode}`)) || p.regions.includes(regionCode)).map(p => {
+                const isActive = activeProvider.id === p.id;
+                return (
+                  <TouchableOpacity
+                    key={p.id}
+                    style={[styles.providerDropdownItem, isActive && styles.providerDropdownItemActive]}
+                    onPress={() => handleProviderSelect(p)}>
+                    <View style={[styles.providerDropdownCircle, { backgroundColor: p.logoUrl ? 'transparent' : p.color, overflow: 'hidden' }]}>
+                      {p.logoUrl ? (
+                        <Image
+                          source={{ uri: p.logoUrl }}
+                          style={{ width: 36, height: 36, borderRadius: 18 }}
+                          resizeMode="cover"
+                        />
+                      ) : (
+                        <Text style={styles.providerDropdownInitials}>{p.shortName}</Text>
+                      )}
+                    </View>
+                    <Text style={[styles.providerDropdownName, isActive && { color: '#fff', fontWeight: '800' }]}>{p.name}</Text>
+                    {isActive && <Ionicons name="checkmark-circle" size={20} color={Colors.accentPurple} style={{ marginLeft: 'auto' }} />}
+                  </TouchableOpacity>
+                );
+              })}
+            </View>
+          </View>
+        </View>
+      </Modal>
 
       {/* Smart Provider Selection Modal — fade animation */}
       <Modal
@@ -1274,6 +1340,38 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 15,
     fontWeight: '800',
+  },
+  providerDropdownItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    marginBottom: 6,
+  },
+  providerDropdownItemActive: {
+    backgroundColor: 'rgba(255,255,255,0.08)',
+  },
+  providerDropdownCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  providerDropdownInitials: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '900',
+    textShadowColor: 'rgba(0,0,0,0.4)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  providerDropdownName: {
+    color: Colors.textSecondary,
+    fontSize: 16,
+    fontWeight: '600',
   },
 });
 

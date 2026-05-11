@@ -13,7 +13,7 @@ import Animated, {
 import DiscoveryCard, {CARD_WIDTH, CARD_HEIGHT} from './DiscoveryCard';
 
 const {width, height} = Dimensions.get('window');
-const SWIPE_THRESHOLD = width * 0.4;
+const SWIPE_THRESHOLD = width * 0.25; // MORE SENSITIVE (was 0.4)
 
 const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) => {
   const translateX = useSharedValue(0);
@@ -57,32 +57,36 @@ const SwipeableCard = forwardRef(({item, isTopCard, isNextCard, onSwiped}, ref) 
       translateX.value = event.translationX;
       translateY.value = event.translationY;
     })
-    .onEnd((event) => {
+    .onFinalize((event) => {
       const {velocityX, velocityY, translationX, translationY} = event;
-      
-      // Horizontal swipe (Skip/Save)
-      if (Math.abs(translationX) > SWIPE_THRESHOLD || Math.abs(velocityX) > 1000) {
+      const absX = Math.abs(translationX);
+      const absY = Math.abs(translationY);
+
+      // 1. HORIZONTAL COMMIT (Prioritize if horizontal movement is dominant)
+      if (absX > absY && (absX > SWIPE_THRESHOLD || Math.abs(velocityX) > 500)) {
         const direction = translationX > 0 ? 'right' : 'left';
-        translateX.value = withSpring(
+        translateX.value = withTiming(
           direction === 'right' ? width * 1.5 : -width * 1.5,
-          { velocity: velocityX, damping: 25, stiffness: 100, mass: 0.8 },
-          () => {} // Animation callback is no longer primary for state
+          { duration: 350 },
+          () => {
+            runOnJS(handleSwipeComplete)(direction);
+          }
         );
-        runOnJS(handleSwipeComplete)(direction);
       } 
-      // Vertical swipe (Watch Now)
-      else if (translationY < -SWIPE_THRESHOLD * 0.8 || velocityY < -800) {
-        translateY.value = withSpring(
+      // 2. VERTICAL COMMIT (Watch Now)
+      else if (absY > absX && (translationY < -SWIPE_THRESHOLD * 0.7 || velocityY < -600)) {
+        translateY.value = withTiming(
           -height * 1.5,
-          { velocity: velocityY, damping: 25, stiffness: 100, mass: 0.8 },
-          () => {}
+          { duration: 350 },
+          () => {
+            runOnJS(handleSwipeComplete)('up');
+          }
         );
-        runOnJS(handleSwipeComplete)('up');
       } 
-      // Reset position
+      // 3. DECISIVE RESET (Snap back faster)
       else {
-        translateX.value = withSpring(0, { damping: 25, stiffness: 200 });
-        translateY.value = withSpring(0, { damping: 25, stiffness: 200 });
+        translateX.value = withSpring(0, { damping: 15, stiffness: 180 });
+        translateY.value = withSpring(0, { damping: 15, stiffness: 180 });
       }
     });
 

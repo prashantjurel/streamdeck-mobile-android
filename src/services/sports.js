@@ -100,7 +100,7 @@ function getUpdatedMatchStatus(match) {
   const isApiPost = match.apiStatus === 'post' || match.apiStatus === 'post-match' || match.apiStatus === 'final';
 
   const hasStarted = matchTimeMs > 0 && now >= matchTimeMs;
-  const isWithinSoonWindow = matchTimeMs > 0 && (matchTimeMs - now < 3 * 60 * 60 * 1000) && (matchTimeMs - now > 0);
+  const isWithinSoonWindow = matchTimeMs > 0 && (matchTimeMs - now < 30 * 60 * 1000) && (matchTimeMs - now > 0);
   const isVeryOld = matchTimeMs > 0 && now > (matchTimeMs + 8 * 60 * 60 * 1000); 
 
   let finalStatus = 'upcoming';
@@ -289,7 +289,7 @@ export async function fetchF1Data() {
       
       const isLive = nowMs >= sessionMs && nowMs <= (sessionMs + durationHours * 60 * 60 * 1000);
       const isPast = nowMs > (sessionMs + durationHours * 60 * 60 * 1000);
-      const isSoon = !isLive && !isPast && (sessionMs - nowMs < 3 * 60 * 60 * 1000);
+      const isSoon = !isLive && !isPast && (sessionMs - nowMs < 30 * 60 * 1000);
       
       let finalStatus = 'upcoming';
       if (isLive) finalStatus = 'LIVE';
@@ -337,9 +337,15 @@ export async function fetchLiveSportsData() {
       if (a.status === 'soon' && b.status !== 'soon' && b.status !== 'LIVE') return -1;
       if (b.status === 'soon' && a.status !== 'soon' && a.status !== 'LIVE') return 1;
       
-      // Sort upcoming by time
       const timeA = new Date(a.startTime).getTime() || 0;
       const timeB = new Date(b.startTime).getTime() || 0;
+      
+      // If both are LIVE, put the most recently started one first (descending)
+      if (a.status === 'LIVE' && b.status === 'LIVE') {
+        return timeB - timeA;
+      }
+      
+      // For upcoming/soon, put the one starting closest to now first (ascending)
       return timeA - timeB;
     });
 

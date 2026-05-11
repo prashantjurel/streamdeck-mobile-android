@@ -30,15 +30,38 @@ const COLUMN_WIDTH = (width - Spacing.xl * 2 - Spacing.md) / 2;
 const AdventurePreferencesScreen = ({navigation}) => {
   const insets = useSafeAreaInsets();
   const [selectedIds, setSelectedIds] = useState([]);
+  const [selectedLanguage, setSelectedLanguage] = useState('global'); // Default to Global
+  const rotation = useSharedValue(0);
+
+  const LANGUAGES = [
+    { id: 'global', name: 'Global', icon: 'earth' },
+    { id: 'IN', name: 'Indian', icon: 'star' },
+  ];
 
   useEffect(() => {
     loadPrefs();
+  }, []);
+
+  useEffect(() => {
+    rotation.value = withRepeat(
+      withTiming(360, { duration: 3000, easing: Easing.linear }),
+      -1,
+      false
+    );
   }, []);
 
   const loadPrefs = async () => {
     try {
       const saved = await AsyncStorage.getItem('streamdeck_adventure_prefs');
       if (saved) setSelectedIds(JSON.parse(saved));
+      
+      const savedLang = await AsyncStorage.getItem('streamdeck_adventure_lang');
+      if (savedLang === 'IN' || savedLang === 'global') {
+        setSelectedLanguage(savedLang);
+      } else {
+        // Reset stale/empty IDs to the new global standard
+        setSelectedLanguage('global');
+      }
     } catch (e) {}
   };
 
@@ -61,8 +84,8 @@ const AdventurePreferencesScreen = ({navigation}) => {
   const handleStart = async () => {
     try {
       if (selectedIds.length === 0) {
-        // If 0 selections, navigate to questions screen
-        navigation.navigate('AdventureQuestions');
+        // If 0 selections, navigate to questions screen with the current vibe
+        navigation.navigate('AdventureQuestions', { selectedLanguage });
         return;
       }
       
@@ -70,20 +93,20 @@ const AdventurePreferencesScreen = ({navigation}) => {
         'streamdeck_adventure_prefs',
         JSON.stringify(selectedIds),
       );
-      navigation.replace('AdventureMain');
+      await AsyncStorage.setItem(
+        'streamdeck_adventure_lang',
+        selectedLanguage,
+      );
+      navigation.navigate('AdventureMain', { 
+        genreIds: selectedIds,
+        selectedLanguage: selectedLanguage,
+        isMoodBased: true // Trigger immediate refresh with new vibe
+      });
     } catch (e) {}
   };
 
-  // Animation for the rotating glow border
-  const rotation = useSharedValue(0);
+  // Removed duplicate hook from here to stabilize order at top
 
-  useEffect(() => {
-    rotation.value = withRepeat(
-      withTiming(360, { duration: 3000, easing: Easing.linear }),
-      -1,
-      false
-    );
-  }, []);
 
   const glowStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value}deg` }],
@@ -101,10 +124,34 @@ const AdventurePreferencesScreen = ({navigation}) => {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.header}>
-          <Text style={styles.title}>Select your Categories</Text>
+          <Text style={styles.title}>Tune Your Discovery</Text>
           <Text style={styles.subtitle}>
             Pick what interests you to personalize your discovery feed.
           </Text>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Content Vibe</Text>
+        </View>
+        <View style={styles.vibeGrid}>
+          {LANGUAGES.map(lang => (
+            <TouchableOpacity 
+              key={lang.id} 
+              onPress={() => setSelectedLanguage(lang.id)}
+              style={[styles.vibeItem, selectedLanguage === lang.id && styles.vibeItemActive]}
+            >
+              <Ionicons 
+                name={lang.icon} 
+                size={18} 
+                color={selectedLanguage === lang.id ? '#fff' : 'rgba(255,255,255,0.4)'} 
+              />
+              <Text style={[styles.vibeText, selectedLanguage === lang.id && styles.vibeTextActive]}>{lang.name}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Categories</Text>
         </View>
 
         <View style={styles.grid}>
@@ -120,17 +167,21 @@ const AdventurePreferencesScreen = ({navigation}) => {
                   isSelected && styles.catCardSelected,
                 ]}
               >
-                {isSelected && (
+                {isSelected ? (
                   <LinearGradient
-                    colors={['rgba(139, 92, 246, 0.15)', 'rgba(236, 72, 153, 0.05)']}
+                    colors={['rgba(139, 92, 246, 0.8)', 'rgba(217, 70, 239, 0.8)']}
+                    start={{x: 0, y: 0}}
+                    end={{x: 1, y: 0}}
                     style={StyleSheet.absoluteFill}
                   />
+                ) : (
+                  <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(255,255,255,0.04)' }]} />
                 )}
                 <View style={[styles.catIconBox, isSelected && styles.catIconBoxActive]}>
                   <Ionicons 
                     name={cat.icon} 
                     size={20} 
-                    color={isSelected ? '#fff' : 'rgba(255,255,255,0.4)'} 
+                    color={isSelected ? '#fff' : 'rgba(255,255,255,0.6)'} 
                   />
                 </View>
                 <View style={styles.catInfo}>
@@ -144,13 +195,14 @@ const AdventurePreferencesScreen = ({navigation}) => {
         </View>
       </ScrollView>
 
-      {/* Premium Floating Action Bar */}
-      <View style={[styles.floatingBottomBar, { bottom: insets.bottom + 140 }]}>
+      {/* Premium Sticky Footer */}
+      <View style={[styles.stickyFooter, { paddingBottom: insets.bottom + 85 }]}>
         <View style={styles.actionRow}>
           {/* Secondary Action: Select All */}
           <TouchableOpacity 
             style={[
               styles.styleButton, 
+              { flex: 1 },
               selectedIds.length === MOVIE_GENRES.length && styles.styleButtonActive
             ]} 
             onPress={toggleAll}
@@ -165,7 +217,7 @@ const AdventurePreferencesScreen = ({navigation}) => {
               styles.styleButtonText,
               selectedIds.length === MOVIE_GENRES.length && styles.styleButtonTextActive
             ]}>
-              {selectedIds.length === MOVIE_GENRES.length ? 'Clear' : 'All'}
+              {selectedIds.length === MOVIE_GENRES.length ? 'Clear' : 'Select All'}
             </Text>
           </TouchableOpacity>
 
@@ -211,7 +263,7 @@ const styles = StyleSheet.create({
   },
   scrollContent: {
     paddingHorizontal: Spacing.xl,
-    paddingBottom: 240, 
+    paddingBottom: Spacing.xl, // Normalized
   },
   header: {
     marginBottom: Spacing.xxl,
@@ -229,6 +281,47 @@ const styles = StyleSheet.create({
     lineHeight: 22,
     fontWeight: '600',
   },
+  sectionHeader: {
+    marginTop: Spacing.xl,
+    marginBottom: Spacing.md,
+  },
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '900',
+    color: Colors.accentPink,
+    textTransform: 'uppercase',
+    letterSpacing: 2,
+  },
+  vibeGrid: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: Spacing.md,
+  },
+  vibeItem: {
+    flex: 1,
+    height: 48,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.08)',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  vibeItemActive: {
+    backgroundColor: Colors.accentPurple,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  vibeText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.5)',
+  },
+  vibeTextActive: {
+    color: '#fff',
+    fontWeight: '900',
+  },
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
@@ -236,21 +329,26 @@ const styles = StyleSheet.create({
   },
   catCard: {
     width: COLUMN_WIDTH,
-    backgroundColor: 'rgba(255,255,255,0.02)',
-    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 14,
     padding: 10,
-    height: 52, 
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.06)',
+    height: 54, 
+    marginBottom: 10,
+    borderWidth: 1.2,
+    borderColor: 'rgba(255,255,255,0.08)',
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     overflow: 'hidden',
   },
   catCardSelected: {
-    borderColor: 'rgba(139, 92, 246, 0.5)',
-    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: '#8b5cf6',
+    elevation: 12,
+    shadowColor: '#8b5cf6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.6,
+    shadowRadius: 12,
   },
   catIconBox: {
     width: 34,
@@ -270,14 +368,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   catName: {
-    fontSize: 13,
-    fontWeight: '600',
-    color: 'rgba(255,255,255,0.4)',
-    letterSpacing: 0.1,
+    fontSize: 14,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.7)',
+    letterSpacing: 0.2,
   },
   catNameActive: {
     color: '#fff',
-    fontWeight: '800',
+    fontWeight: '900',
   },
   checkbox: {
     width: 18,
@@ -292,12 +390,12 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.accentPurple,
     borderColor: Colors.accentPurple,
   },
-  floatingBottomBar: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
+  stickyFooter: {
+    backgroundColor: 'rgba(10, 10, 15, 0.98)',
     paddingHorizontal: Spacing.xl,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
   actionRow: {
     flexDirection: 'row',
@@ -307,15 +405,15 @@ const styles = StyleSheet.create({
   },
   styleButton: {
     flexDirection: 'row',
-    alignItems: 'center', // Vertical center
-    justifyContent: 'center', // Horizontal center
-    backgroundColor: 'rgba(25, 25, 30, 0.95)',
-    height: 46, // Standardized height
-    paddingHorizontal: 20,
-    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(40, 40, 50, 0.95)', // Darker, more solid
+    height: 56, // Proportional impact
+    paddingHorizontal: 15,
+    borderRadius: 18,
     gap: 8,
-    borderWidth: 1.5,
-    borderColor: 'transparent',
+    borderWidth: 2, // Thicker for visibility marker
+    borderColor: 'rgba(255, 255, 255, 0.15)',
   },
   styleButtonActive: {
     borderColor: 'rgba(139, 92, 246, 0.4)',

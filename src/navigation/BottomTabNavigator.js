@@ -4,6 +4,7 @@ import {View, Text, StyleSheet, Platform} from 'react-native';
 import {createBottomTabNavigator} from '@react-navigation/bottom-tabs';
 import {createNativeStackNavigator} from '@react-navigation/native-stack';
 import LinearGradient from 'react-native-linear-gradient';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 
 import HomeScreen from '../screens/HomeScreen';
@@ -41,17 +42,18 @@ const AdventureStack = () => {
   );
 };
 
-// Tab Icons using text/emoji
+// Tab Icons using Ionicons
 const TAB_ICONS = {
-  Home: {default: '⌂', active: '⌂'},
-  Explore: {default: '⊕', active: '⊕'},
-  Adventure: {default: '✧', active: '✧'},
-  Library: {default: '☰', active: '☰'},
-  LiveTV: {default: '◉', active: '◉'},
-  Settings: {default: '⚙', active: '⚙'},
+  Home: {default: 'home-outline', active: 'home'},
+  Explore: {default: 'compass-outline', active: 'compass'},
+  Adventure: {default: 'planet-outline', active: 'planet'},
+  Library: {default: 'bookmark-outline', active: 'bookmark'},
+  LiveTV: {default: 'tv-outline', active: 'tv'},
+  Settings: {default: 'settings-outline', active: 'settings'},
 };
 
 const TabIcon = ({name, focused}) => {
+  const iconName = focused ? TAB_ICONS[name]?.active : TAB_ICONS[name]?.default;
   return (
     <View style={styles.tabIconContainer}>
       {focused && (
@@ -64,13 +66,12 @@ const TabIcon = ({name, focused}) => {
           />
         </View>
       )}
-      <Text
-        style={[
-          styles.tabIcon,
-          focused && styles.tabIconActive,
-        ]}>
-        {focused ? TAB_ICONS[name]?.active : TAB_ICONS[name]?.default}
-      </Text>
+      <Ionicons
+        name={iconName}
+        size={24}
+        color={focused ? '#fff' : Colors.textMuted}
+        style={styles.iconShadow}
+      />
     </View>
   );
 };
@@ -82,7 +83,7 @@ const TabNavigator = () => {
       screenOptions={({route}) => ({
         headerShown: false,
         tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: Colors.accentPurple,
+        tabBarActiveTintColor: '#fff',
         tabBarInactiveTintColor: Colors.textMuted,
         tabBarLabelStyle: styles.tabLabel,
         tabBarIcon: ({focused}) => (
@@ -130,46 +131,55 @@ const RootNavigator = () => {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    backgroundColor: 'rgba(10, 10, 15, 0.98)',
     borderTopWidth: 1,
-    borderTopColor: Colors.borderSubtle,
-    height: Platform.OS === 'android' ? 80 : 85,
-    paddingBottom: Platform.OS === 'android' ? 24 : 28,
+    borderTopColor: 'rgba(255,255,255,0.05)',
+    height: Platform.OS === 'android' ? 86 : 85,
+    paddingBottom: Platform.OS === 'android' ? 32 : 28,
     paddingTop: 8,
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    elevation: 20,
+    elevation: 24,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
   },
   tabLabel: {
-    fontSize: FontSizes.xs - 1,
-    fontWeight: '600',
-    marginTop: 2,
+    fontSize: 10,
+    fontWeight: '700',
+    letterSpacing: 0.2,
   },
   tabIconContainer: {
     alignItems: 'center',
     justifyContent: 'center',
     position: 'relative',
+    height: '100%',
+    width: 60,
   },
   activeIndicator: {
     position: 'absolute',
-    top: -12,
-    width: 24,
+    top: -8, // Matches paddingTop of tabBar to touch the very edge
+    width: 36,
     height: 3,
-    borderRadius: 2,
+    borderBottomLeftRadius: 4,
+    borderBottomRightRadius: 4,
     overflow: 'hidden',
   },
   activeGlow: {
     width: '100%',
     height: '100%',
+    shadowColor: Colors.accentPink,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.8,
+    shadowRadius: 8,
   },
-  tabIcon: {
-    fontSize: 22,
-    color: Colors.textMuted,
-  },
-  tabIconActive: {
-    color: Colors.accentPurple,
+  iconShadow: {
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
 });
 

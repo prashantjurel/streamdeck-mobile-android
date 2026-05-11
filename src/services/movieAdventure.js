@@ -20,15 +20,23 @@ export const MOVIE_GENRES = [
   { id: 53, name: 'Thriller', icon: 'flashlight' },
 ];
 
-export const fetchMovieRecommendations = async (genreIds = [], page = 1) => {
+export const fetchMovieRecommendations = async (genreIds = [], page = 1, language = '') => {
   const apiKey = await getApiKey();
   if (!apiKey) return [];
 
   try {
     let url = `https://api.tmdb.org/3/discover/movie?api_key=${apiKey}&language=en-US&sort_by=popularity.desc&include_adult=false&include_video=false&page=${page}`;
     
-    if (genreIds && genreIds.length > 0) {
-      // TMDB uses comma separated genre IDs to mean OR, and pipe | for AND. We'll use OR (,)
+    if (language && language !== 'global') {
+      if (language === 'IN') {
+        url += '&with_origin_country=IN';
+      } else {
+        url += `&with_original_language=${language}`;
+      }
+    }
+
+    // Optimization: If all genres are selected, omit the filter to get wider results
+    if (genreIds && genreIds.length > 0 && genreIds.length < MOVIE_GENRES.length) {
       url += `&with_genres=${genreIds.join(',')}`;
     }
 
@@ -44,8 +52,10 @@ export const fetchMovieRecommendations = async (genreIds = [], page = 1) => {
       backdrop: movie.backdrop_path ? `https://image.tmdb.org/t/p/w500${movie.backdrop_path}` : null,
     })).filter(m => m.thumb);
 
-    // Shuffle the results for local variety
-    return results.sort(() => Math.random() - 0.5);
+    return {
+      results: results.sort(() => Math.random() - 0.5),
+      totalPages: Math.min(data.total_pages || 1, 500) // Cap for stability
+    };
   } catch (err) {
     if (err.message === 'INVALID_API_KEY') throw err;
     console.error('[Adventure] Failed to fetch movie recommendations:', err);

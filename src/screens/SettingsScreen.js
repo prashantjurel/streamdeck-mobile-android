@@ -39,7 +39,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { useFocusEffect } from '@react-navigation/native';
 import { signInWithGoogle, signOut, onAuthStateChanged, configureGoogleSignIn } from '../services/auth';
-import { pullFromCloud, pushToCloud } from '../services/sync';
+import { syncWithCloud } from '../services/sync';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const REGIONS = [
@@ -50,14 +50,21 @@ const REGIONS = [
   { code: 'CA', name: 'Canada', flag: '🇨🇦' },
 ];
 
-const CollapsibleHeader = ({ title, sectionKey, isExpanded, onToggle }) => (
+const CollapsibleHeader = ({ title, sectionKey, isExpanded, onToggle, subtitle }) => (
   <TouchableOpacity 
     style={styles.collapsibleHeader} 
     onPress={() => onToggle(sectionKey)}
     activeOpacity={0.7}
   >
     <Text style={styles.sectionLabel}>{title}</Text>
-    <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color={Colors.textMuted} />
+    <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+      {!isExpanded && subtitle && (
+        <View style={{ backgroundColor: 'rgba(74, 222, 128, 0.15)', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 10, marginRight: 12 }}>
+          <Text style={{ color: '#4ADE80', fontSize: 11, fontFamily: 'Inter-Bold', letterSpacing: 0.5 }}>{subtitle}</Text>
+        </View>
+      )}
+      <Ionicons name={isExpanded ? "chevron-up" : "chevron-down"} size={20} color={Colors.textMuted} />
+    </View>
   </TouchableOpacity>
 );
 
@@ -180,16 +187,39 @@ const SettingsScreen = ({ navigation }) => {
     }, [navigation])
   );
 
+  const handleManualSync = async () => {
+    if (!user) return;
+    setSyncing(true);
+    if (settings) {
+      await saveSettings(settings); // Force flush current UI state to storage before syncing!
+    }
+    if (apiKey !== undefined) {
+      const { saveApiKey: storageSaveApiKey } = require('../utils/storage');
+      await storageSaveApiKey(apiKey.trim()); // Flush API key state too
+    }
+    await syncWithCloud(user.uid);
+    setSyncing(false);
+    loadData(); // Ensure UI reflects any merged cloud data
+  };
+
   useEffect(() => {
     loadData();
     configureGoogleSignIn();
     
     const unsubscribe = onAuthStateChanged(async (u) => {
       setUser(u);
+      
+      // Auto-collapse Account section if signed in
+      setExpandedSections(prev => ({
+        ...prev,
+        account: !u
+      }));
+
       if (u) {
         setSyncing(true);
-        await pullFromCloud(u.uid);
+        await syncWithCloud(u.uid);
         setSyncing(false);
+        loadData(); // RE-LOAD after sync
       }
     });
     return unsubscribe;
@@ -200,11 +230,10 @@ const SettingsScreen = ({ navigation }) => {
     const timer = setTimeout(async () => {
       if (settings) {
         await saveSettings(settings);
-        if (user) pushToCloud(user.uid, settings);
         setShowSaved(true);
         setTimeout(() => setShowSaved(false), 1500);
       }
-    }, 1000);
+    }, 1500); // Increased debounce to 1.5s
     return () => clearTimeout(timer);
   }, [settings]);
 
@@ -232,7 +261,7 @@ const SettingsScreen = ({ navigation }) => {
     const s = await loadSettings();
     setSettings(s);
     const key = await getApiKey();
-    setApiKeyState(key === '4b7f91faba006196d244250a3f87ffce' ? '' : key);
+    setApiKeyState(key || '');
     
     // Initial ping for enabled sources
     [...(s.movieboxSources || []), ...(s.liveSportsProviders || [])]
@@ -317,6 +346,7 @@ const SettingsScreen = ({ navigation }) => {
             sectionKey="account" 
             isExpanded={expandedSections.account}
             onToggle={toggleSection}
+            subtitle={user ? '✓ CONNECTED' : null}
           />
           {expandedSections.account && (
             <View style={styles.card}>
@@ -339,7 +369,31 @@ const SettingsScreen = ({ navigation }) => {
                     
                     <View style={styles.connectedActions}>
                       <TouchableOpacity 
-                        style={styles.switchAccountBtn}
+                        style={[styles.actionBtn, styles.syncNowBtn, syncing && { opacity: 0.7 }]}
+                        onPress={async () => {
+                          if (syncing) return;
+                          try {
+                            await handleManualSync();
+                            showAlert('Sync Complete', 'Your settings and library are now secured in the cloud.', null, 'OK', null, null, 'success');
+                          } catch (e) {
+                            setSyncing(false);
+                            showAlert('Sync Failed', 'Could not reach the cloud. Check your connection.', null, 'OK', null, null, 'error');
+                          }
+                        }}
+                        disabled={syncing}
+                      >
+                        {syncing ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <>
+                            <Ionicons name="cloud-upload" size={16} color="#fff" />
+                            <Text style={styles.actionBtnText}>Sync</Text>
+                          </>
+                        )}
+                      </TouchableOpacity>
+
+                      <TouchableOpacity 
+                        style={[styles.actionBtn, styles.switchAccountBtn]}
                         onPress={async () => {
                           try {
                             setSyncing(true);
@@ -350,16 +404,19 @@ const SettingsScreen = ({ navigation }) => {
                           }
                         }}
                       >
-                        <Text style={styles.switchAccountText}>Switch Account</Text>
+                        <Ionicons name="swap-horizontal" size={16} color="#fff" />
+                        <Text style={styles.actionBtnText}>Switch</Text>
                       </TouchableOpacity>
+
                       <TouchableOpacity 
-                        style={styles.logoutBtn}
+                        style={[styles.actionBtn, styles.logoutBtn]}
                         onPress={async () => {
                           await signOut();
                           showAlert('Signed Out', 'Cloud sync is now disabled.', null, 'OK', null, null, 'info');
                         }}
                       >
-                        <Text style={styles.logoutText}>Sign Out</Text>
+                        <Ionicons name="log-out-outline" size={16} color="#ef4444" />
+                        <Text style={[styles.actionBtnText, { color: '#ef4444' }]}>Sign Out</Text>
                       </TouchableOpacity>
                     </View>
                   </LinearGradient>
@@ -430,7 +487,7 @@ const SettingsScreen = ({ navigation }) => {
         {/* TMDB API Key */}
         <View style={styles.section}>
           <CollapsibleHeader 
-            title="SMART SEARCH (TMDB API)" 
+            title="TMDB API" 
             sectionKey="tmdb" 
             isExpanded={expandedSections.tmdb}
             onToggle={toggleSection}
@@ -550,7 +607,14 @@ const SettingsScreen = ({ navigation }) => {
                 style={styles.manageBtn}
                 onPress={() => navigation.navigate('SourceManager', { type: 'moviebox' })}
               >
-                <Text style={styles.manageBtnText}>Manage Sources ⚙️</Text>
+                <LinearGradient
+                  colors={['rgba(157, 78, 221, 0.2)', 'rgba(157, 78, 221, 0.05)']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.manageGradient}
+                >
+                  <Text style={styles.manageBtnText}>Manage Sources</Text>
+                </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
@@ -601,7 +665,14 @@ const SettingsScreen = ({ navigation }) => {
                 style={styles.manageBtn}
                 onPress={() => navigation.navigate('SourceManager', { type: 'sports' })}
               >
-                <Text style={styles.manageBtnText}>Manage Providers ⚙️</Text>
+                <LinearGradient
+                  colors={['rgba(157, 78, 221, 0.2)', 'rgba(157, 78, 221, 0.05)']}
+                  start={{ x: 0, y: 0 }}
+                  end={{ x: 1, y: 0 }}
+                  style={styles.manageGradient}
+                >
+                  <Text style={styles.manageBtnText}>Manage Providers</Text>
+                </LinearGradient>
               </TouchableOpacity>
             </View>
           )}
@@ -812,35 +883,42 @@ const styles = StyleSheet.create({
   },
   connectedActions: {
     flexDirection: 'row',
-    gap: 12,
+    alignItems: 'center',
+    gap: 8,
+    marginTop: Spacing.sm,
+  },
+  actionBtn: {
+    flex: 1,
+    height: 42,
+    borderRadius: 10,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+  },
+  actionBtnText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.2,
+  },
+  syncNowBtn: {
+    backgroundColor: Colors.accentPurple,
+    shadowColor: Colors.accentPurple,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 4,
   },
   switchAccountBtn: {
-    flex: 1,
     backgroundColor: 'rgba(255,255,255,0.08)',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.1)',
   },
-  switchAccountText: {
-    color: Colors.textPrimary,
-    fontWeight: '700',
-    fontSize: 14,
-  },
   logoutBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
     borderWidth: 1,
-    borderColor: 'rgba(239, 68, 68, 0.2)',
-  },
-  logoutText: {
-    color: '#ef4444',
-    fontWeight: '700',
-    fontSize: 14,
+    borderColor: 'rgba(239, 68, 68, 0.15)',
   },
   sourceItem: {
     backgroundColor: 'rgba(0,0,0,0.2)',
@@ -1014,20 +1092,29 @@ const styles = StyleSheet.create({
     lineHeight: 22,
   },
   manageBtn: {
-    marginTop: 12,
-    backgroundColor: 'rgba(157, 78, 221, 0.1)',
-    borderRadius: 12,
+    marginTop: 16,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(157, 78, 221, 0.4)',
+    shadowColor: Colors.accentPurple,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  manageGradient: {
     paddingVertical: 14,
     alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(157, 78, 221, 0.2)',
   },
   manageBtnText: {
-    color: Colors.accentPurple,
-    fontSize: 14,
+    color: '#fff',
+    fontSize: 13,
     fontWeight: '800',
     textTransform: 'uppercase',
-    letterSpacing: 1,
+    letterSpacing: 1.5,
+    textShadowColor: 'rgba(0, 0, 0, 0.3)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
   },
   input: {
     backgroundColor: 'rgba(0, 0, 0, 0.3)',

@@ -5,17 +5,18 @@ import {Linking} from 'react-native';
  * Mapping TMDB provider IDs to internal IDs, names, search URLs and App Deep Link Schemes.
  */
 export const OTT_PROVIDER_MAP = {
-  8:   { id: 'netflix',   name: 'Netflix',      searchUrl: 'https://www.netflix.com/search?q=',         appScheme: 'nflx://www.netflix.com/search?q=', icon: 'N', color: '#E50914' },
-  119: { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: ['primevideo://search?phrase=', 'amazonvideo://watch/'], icon: 'P', color: '#00A8E1' },
-  9:   { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: ['primevideo://search?phrase=', 'amazonvideo://watch/'], icon: 'P', color: '#00A8E1' }, 
-  122: { id: 'hotstar',   name: 'JioHotstar',    searchUrl: 'https://www.hotstar.com/in/explore?search_query=', appScheme: 'hotstar://search?q=', icon: 'H', color: '#001E3C' },
-  220: { id: 'jio',       name: 'JioCinema',     searchUrl: 'https://www.jiocinema.com/search/',          appScheme: 'jiocinema://', icon: 'JC', color: '#D9008D' },
-  3:   { id: 'google',    name: 'Google TV',     searchUrl: 'https://play.google.com/store/search?q=',    appScheme: 'market://search?q=', icon: 'G', color: '#EA4335' },
-  2:   { id: 'apple',     name: 'Apple TV',      searchUrl: 'https://tv.apple.com/in/search?term=',       appScheme: 'videos://', icon: '', color: '#000000' },
-  232: { id: 'zee5',      name: 'Zee5',          searchUrl: 'https://www.zee5.com/search?q=',             appScheme: 'zee5://search?q=', icon: 'Z5', color: '#821B6F' },
-  237: { id: 'sonyliv',   name: 'SonyLIV',       searchUrl: 'https://www.sonyliv.com/search?q=',          appScheme: 'sonyliv://search?q=', icon: 'SL', color: '#2e2e6e' },
-  121: { id: 'voot',      name: 'Voot',          searchUrl: 'https://www.voot.com/search?q=',             appScheme: 'voot://', icon: 'V', color: '#6A1B9A' },
-  'youtube': { id: 'youtube', name: 'YouTube',  searchUrl: 'https://www.youtube.com/results?search_query=', appScheme: 'youtube://results?search_query=', icon: 'Y', color: '#FF0000' }
+  8:   { id: 'netflix',   name: 'Netflix',      searchUrl: 'https://www.netflix.com/search?q=',         appScheme: 'nflx://www.netflix.com/search?q=', icon: 'N', color: '#E50914', logoUrl: 'https://image.tmdb.org/t/p/w200/t2yyOv40HZeVlLjYsCsPHnWLk4W.jpg' },
+  119: { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: ['primevideo://search?phrase=', 'amazonvideo://watch/'], icon: 'P', color: '#00A8E1', logoUrl: 'https://image.tmdb.org/t/p/w200/emthp39XA2YScoYL1p0sdbAH2WA.jpg' },
+  9:   { id: 'prime',     name: 'Prime Video',   searchUrl: 'https://www.primevideo.com/search?phrase=',  appScheme: ['primevideo://search?phrase=', 'amazonvideo://watch/'], icon: 'P', color: '#00A8E1', logoUrl: 'https://image.tmdb.org/t/p/w200/emthp39XA2YScoYL1p0sdbAH2WA.jpg' }, 
+  122: { id: 'hotstar',   name: 'JioHotstar',    searchUrl: 'https://www.hotstar.com/in/explore?search_query=', appScheme: 'hotstar://search?q=', icon: 'H', color: '#001E3C', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' },
+  2336: { id: 'hotstar',  name: 'JioHotstar',    searchUrl: 'https://www.hotstar.com/in/explore?search_query=', appScheme: 'hotstar://search?q=', icon: 'H', color: '#001E3C', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' },
+  220: { id: 'jio',       name: 'JioCinema',     searchUrl: 'https://www.jiocinema.com/search/',          appScheme: 'jiocinema://', icon: 'JC', color: '#D9008D', logoUrl: 'https://image.tmdb.org/t/p/w200/d3ixI1no0EpTj2i7u0Sd2DBXVlG.jpg' },
+  350: { id: 'apple',     name: 'Apple TV+',     searchUrl: 'https://tv.apple.com/in/search?term=',       appScheme: 'videos://', icon: '', color: '#000000', logoUrl: 'https://image.tmdb.org/t/p/w200/6uhKBfmtzFqOcLousHwZuzcrScK.jpg' },
+  3:   { id: 'google',    name: 'Google TV',     searchUrl: 'https://play.google.com/store/search?q=',    appScheme: 'market://search?q=', icon: 'G', color: '#EA4335', logoUrl: 'https://image.tmdb.org/t/p/w200/tbEdFQDwx5LEVr8WpSeXQSIirVq.jpg' },
+  232: { id: 'zee5',      name: 'Zee5',          searchUrl: 'https://www.zee5.com/search?q=',             appScheme: 'zee5://search?q=', icon: 'Z5', color: '#821B6F', logoUrl: 'https://image.tmdb.org/t/p/w200/xEPXbwbfABzPrUTWbgtDFH1NOa.jpg' },
+  237: { id: 'sonyliv',   name: 'SonyLIV',       searchUrl: 'https://www.sonyliv.com/search?q=',          appScheme: 'sonyliv://search?q=', icon: 'SL', color: '#2e2e6e', logoUrl: 'https://image.tmdb.org/t/p/w200/tBhjAMfKnkzJNmOiMB8DsBx5QAp.jpg' },
+  121: { id: 'voot',      name: 'Voot',          searchUrl: 'https://www.voot.com/search?q=',             appScheme: 'voot://', icon: 'V', color: '#6A1B9A', logoUrl: 'https://image.tmdb.org/t/p/w200/xTVM8uXT9QocigQ07LE7Irc65W2.jpg' },
+  'youtube': { id: 'youtube', name: 'YouTube',  searchUrl: 'https://www.youtube.com/results?search_query=', appScheme: 'youtube://results?search_query=', icon: 'Y', color: '#FF0000', logoUrl: 'https://image.tmdb.org/t/p/w200/pTnn5JwWr4p3v2RHQZG5bI2oQGo.jpg' }
 };
 
 /**

@@ -15,11 +15,45 @@ import LinearGradient from 'react-native-linear-gradient';
 import { Colors, FontSizes, BorderRadius, Spacing } from '../theme/colors';
 import { getApiKey, saveApiKey } from '../utils/storage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { signInWithGoogle } from '../services/auth';
+import { getDatabase, ref, get, set } from '@react-native-firebase/database';
 
 const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
   const [apiKey, setApiKey] = useState('');
   const [isValidating, setIsValidating] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [isSigningIn, setIsSigningIn] = useState(false);
+
+  const handleGoogleSignIn = async () => {
+    setIsSigningIn(true);
+    setErrorMsg('');
+    try {
+      const user = await signInWithGoogle();
+      if (user) {
+        // Query cloud for existing key
+        const db = getDatabase();
+        const userRef = ref(db, `/users/${user.uid}`);
+        const snapshot = await get(userRef);
+        const cloudData = snapshot.val() || {};
+        
+        if (cloudData.tmdbApiKey) {
+          // Returning user with key! Save locally and exit
+          await saveApiKey(cloudData.tmdbApiKey);
+          if (onKeySaved) onKeySaved(cloudData.tmdbApiKey);
+          return; // Modal closes instantly
+        }
+        
+        // New user or no key in cloud — update UI state
+        setCurrentUser(user);
+      }
+    } catch (e) {
+      console.error(e);
+      // Errors handled with native Alerts inside auth.js
+    } finally {
+      setIsSigningIn(false);
+    }
+  };
 
   const handleSave = async () => {
     // Deep scrub: Remove whitespace AND any non-alphanumeric characters (like hidden WhatsApp symbols)
@@ -55,8 +89,22 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
       return;
     }
 
-    // Save the key
+    // Save the key locally
     await saveApiKey(key);
+    
+    // If logged in but no key was found in cloud, save it to cloud now
+    if (currentUser) {
+      try {
+        const db = getDatabase();
+        const userRef = ref(db, `/users/${currentUser.uid}`);
+        const snapshot = await get(userRef);
+        const cloudData = snapshot.val() || {};
+        await set(userRef, { ...cloudData, tmdbApiKey: key });
+      } catch (e) {
+        console.error('Failed to backup key to cloud', e);
+      }
+    }
+
     if (onKeySaved) {
       onKeySaved(key);
     }
@@ -91,48 +139,58 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
             </TouchableOpacity>
           </View>
 
-          <View style={styles.featuresContainer}>
-            <View style={styles.featureItem}>
-              <View style={styles.featureIconBox}>
-                <Ionicons name="sync-outline" size={18} color={Colors.accentPurple} />
-              </View>
-              <Text style={styles.featureText}>Synchronize metadata and posters</Text>
+          {currentUser ? (
+            <View style={styles.welcomeCard}>
+              <Ionicons name="checkmark-circle" size={40} color={Colors.accentPurple} style={{ marginBottom: 8 }} />
+              <Text style={styles.welcomeTitle}>Welcome, {currentUser.displayName?.split(' ')[0] || 'User'}!</Text>
+              <Text style={styles.welcomeText}>You're signed in. To finish setting up your library, please enter your TMDB API Key.</Text>
             </View>
-            <View style={styles.featureItem}>
-              <View style={styles.featureIconBox}>
-                <Ionicons name="search-outline" size={18} color={Colors.accentPurple} />
+          ) : (
+            <>
+              <View style={styles.infoBox}>
+                <Ionicons name="information-circle" size={24} color={Colors.accentPurple} style={{ marginRight: 10, marginTop: 2 }} />
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.infoBoxText}>
+                    <Text style={{ fontWeight: 'bold', color: '#fff' }}>Existing Users:</Text> Sign in to instantly restore your API key.
+                  </Text>
+                  <Text style={[styles.infoBoxText, { marginTop: 4 }]}>
+                    <Text style={{ fontWeight: 'bold', color: '#fff' }}>New Users:</Text> Sign in to backup your library, but you will still need to enter a TMDB API Key below.
+                  </Text>
+                </View>
               </View>
-              <Text style={styles.featureText}>Real-time trending & search results</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <View style={styles.featureIconBox}>
-                <Ionicons name="flash-outline" size={18} color={Colors.accentPurple} />
-              </View>
-              <Text style={styles.featureText}>Instant one-time integration</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <View style={styles.featureIconBox}>
-                <Ionicons name="time-outline" size={18} color={Colors.accentPurple} />
-              </View>
-              <Text style={styles.featureText}>Setup completed in under 2 mins</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <View style={styles.featureIconBox}>
-                <Ionicons name="hardware-chip-outline" size={18} color={Colors.accentPurple} />
-              </View>
-              <Text style={styles.featureText}>Powered by TMDB Infrastructure</Text>
-            </View>
-          </View>
 
-          <View style={styles.proTipCard}>
-            <View style={styles.tipHeader}>
-              <Ionicons name="bulb" size={16} color="#c084fc" />
-              <Text style={styles.proTipTitle}>Implementation Pro-Tip</Text>
-            </View>
-            <Text style={styles.proTipContent}>
-              Select <Text style={{ fontWeight: 'bold', color: '#fff' }}>"Developer"</Text> and use <Text style={{ fontWeight: 'bold', color: '#fff' }}>"Personal Use"</Text> to bypass manual approval queues.
-            </Text>
-          </View>
+              <TouchableOpacity 
+                style={styles.googleButton} 
+                onPress={handleGoogleSignIn}
+                disabled={isSigningIn || isValidating}
+              >
+                {isSigningIn ? (
+                  <ActivityIndicator color="#000" size="small" />
+                ) : (
+                  <>
+                    <Ionicons name="logo-google" size={18} color="#000" style={{ marginRight: 8 }} />
+                    <Text style={styles.googleButtonText}>Continue with Google</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+              
+              <View style={styles.dividerRow}>
+                <View style={styles.dividerLine} />
+                <Text style={styles.dividerText}>or setup manually</Text>
+                <View style={styles.dividerLine} />
+              </View>
+              
+              <View style={styles.proTipCard}>
+                <View style={styles.tipHeader}>
+                  <Ionicons name="bulb" size={16} color="#c084fc" />
+                  <Text style={styles.proTipTitle}>Implementation Pro-Tip</Text>
+                </View>
+                <Text style={styles.proTipContent}>
+                  Select <Text style={{ fontWeight: 'bold', color: '#fff' }}>"Developer"</Text> and use <Text style={{ fontWeight: 'bold', color: '#fff' }}>"Personal Use"</Text> to bypass manual approval queues.
+                </Text>
+              </View>
+            </>
+          )}
 
           <View style={[styles.inputContainer, errorMsg ? { borderColor: Colors.accentPink } : {}]}>
             <TextInput
@@ -374,6 +432,74 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '800',
     letterSpacing: 0.5,
+  },
+  googleButton: {
+    backgroundColor: '#fff',
+    height: 52,
+    borderRadius: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 16,
+    elevation: 4,
+  },
+  googleButtonText: {
+    color: '#000',
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+  },
+  dividerText: {
+    color: 'rgba(255,255,255,0.4)',
+    paddingHorizontal: 12,
+    fontSize: 12,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+  },
+  welcomeCard: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    borderRadius: 16,
+    padding: 20,
+    marginBottom: 20,
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.2)',
+  },
+  welcomeTitle: {
+    color: '#fff',
+    fontSize: 18,
+    fontWeight: '800',
+    marginBottom: 8,
+  },
+  welcomeText: {
+    color: 'rgba(255,255,255,0.7)',
+    fontSize: 14,
+    textAlign: 'center',
+    lineHeight: 20,
+  },
+  infoBox: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(139, 92, 246, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(139, 92, 246, 0.25)',
+    padding: 16,
+    borderRadius: 16,
+    marginBottom: 20,
+    alignItems: 'flex-start',
+  },
+  infoBoxText: {
+    color: 'rgba(255, 255, 255, 0.75)',
+    fontSize: 13,
+    lineHeight: 18,
   },
 });
 

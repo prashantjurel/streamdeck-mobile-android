@@ -1,5 +1,5 @@
 // StreamDeck Mobile — Explore Screen
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -17,14 +17,24 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, FontSizes, Spacing, BorderRadius } from '../theme/colors';
-import { searchTMDB, fetchNowPlaying, fetchTopRated, getImageUrl, fetchWatchProviders } from '../services/tmdb';
+import { 
+  searchTMDB, 
+  fetchNowPlaying, 
+  fetchNowPlayingTV,
+  fetchTopRated, 
+  fetchTopRatedTV,
+  getImageUrl, 
+  fetchWatchProviders 
+} from '../services/tmdb';
 import { loadSettings } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
 import PosterCard from '../components/PosterCard';
+import TrendingRow from '../components/TrendingRow';
 import LinearGradient from 'react-native-linear-gradient';
 import { useApi } from '../context/ApiContext';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import Ionicons from 'react-native-vector-icons/Ionicons';
 
 
 
@@ -36,6 +46,7 @@ const ExploreScreen = ({ navigation, route }) => {
   const [topRated, setTopRated] = useState([]);
   const [searching, setSearching] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [topRatedFilter, setTopRatedFilter] = useState('movie');
 
   // Selection Modal State
   const [selectedMovie, setSelectedMovie] = useState(null);
@@ -79,9 +90,15 @@ const ExploreScreen = ({ navigation, route }) => {
 
   const loadExploreContent = async () => {
     try {
-      const [np, tr] = await Promise.all([fetchNowPlaying(), fetchTopRated()]);
-      setNowPlaying(np);
-      setTopRated(tr);
+      const [npMovies, npTv, trMovies, trTv] = await Promise.all([
+        fetchNowPlaying(),
+        fetchNowPlayingTV(),
+        fetchTopRated(),
+        fetchTopRatedTV(),
+      ]);
+
+      setNowPlaying([...npMovies, ...npTv]);
+      setTopRated([...trMovies, ...trTv]);
     } catch (e) {
       if (e.message === 'INVALID_API_KEY') invalidateKey();
       console.error('[Explore] Load error:', e);
@@ -115,9 +132,11 @@ const ExploreScreen = ({ navigation, route }) => {
   }, [searchQuery, handleSearch]);
 
   const handleMoviePress = async movie => {
+    console.log('[Explore] handleMoviePress called!', movie?.title || movie?.name);
     setSelectedMovie(movie);
     setCheckingAvailability(true);
     setShowPicker(true);
+    console.log('[Explore] showPicker set to true');
     setAvailableProviders([]);
 
     try {
@@ -137,9 +156,9 @@ const ExploreScreen = ({ navigation, route }) => {
             const tmdbProvider = allProviders.find(p => p.provider_id === id);
             found.push({
               ...OTT_PROVIDER_MAP[id],
-              logoUrl: tmdbProvider?.logo_path ? `https://image.tmdb.org/t/p/w200${tmdbProvider.logo_path}` : null,
-              icon: '📺',
-              color: '#333'
+              logoUrl: tmdbProvider?.logo_path 
+                ? `https://image.tmdb.org/t/p/w200${tmdbProvider.logo_path}` 
+                : OTT_PROVIDER_MAP[id].logoUrl || null,
             });
           }
         });
@@ -184,12 +203,13 @@ const ExploreScreen = ({ navigation, route }) => {
         });
 
       // Always Add YouTube as Primary Hub
+      const ytMap = OTT_PROVIDER_MAP['youtube'] || {};
       found.push({
         id: 'youtube',
         name: 'YouTube',
         color: '#FF0000',
         icon: 'youtube',
-        logoUrl: null,
+        logoUrl: ytMap.logoUrl || null,
         searchUrl: 'https://www.youtube.com/results?search_query='
       });
 
@@ -339,27 +359,54 @@ const ExploreScreen = ({ navigation, route }) => {
           )}
         </View>
       ) : (
-        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: Spacing.md }}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingTop: Spacing.md }} keyboardShouldPersistTaps="handled">
           {nowPlaying.length > 0 && (
             <View style={styles.section}>
-              <SectionHeader title="Now Playing" subtitle="In theaters" />
+              <SectionHeader title="Recent Hits" subtitle="Fresh in theaters & air" />
               <FlatList
-                data={nowPlaying.slice(0, 15)}
+                data={nowPlaying.filter(m => m.media_type === 'movie' || (!m.media_type && m.title)).slice(0, 15)}
                 horizontal
                 showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
                 contentContainerStyle={styles.horizontalList}
+                keyExtractor={(item, idx) => `np-${item.id}-${idx}`}
                 renderItem={({ item }) => <PosterCard movie={item} onPress={handleMoviePress} />}
               />
             </View>
           )}
           {topRated.length > 0 && (
             <View style={styles.section}>
-              <SectionHeader title="Top Rated" subtitle="All-time favorites" />
+              <SectionHeader 
+                title="Top Rated" 
+                subtitle="All-time favorites" 
+                rightAction={
+                  <TouchableOpacity 
+                    onPress={() => setTopRatedFilter(f => f === 'movie' ? 'tv' : 'movie')} 
+                    activeOpacity={0.7}
+                    style={styles.exploreToggle}
+                  >
+                    <Text style={styles.exploreToggleText}>
+                      {topRatedFilter === 'movie' ? 'Movies' : 'Series'}
+                    </Text>
+                    <Ionicons 
+                      name="chevron-down" 
+                      size={8} 
+                      color="rgba(255,255,255,0.4)" 
+                      style={{ marginLeft: 3, marginTop: 1 }} 
+                    />
+                  </TouchableOpacity>
+                }
+              />
               <FlatList
-                data={topRated.slice(0, 15)}
+                data={topRated.filter(m => {
+                  if (topRatedFilter === 'movie') return m.media_type === 'movie' || (!m.media_type && m.title);
+                  return m.media_type === 'tv' || (!m.media_type && m.name);
+                }).slice(0, 15)}
                 horizontal
                 showsHorizontalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
                 contentContainerStyle={styles.horizontalList}
+                keyExtractor={(item, idx) => `tr-${topRatedFilter}-${item.id}-${idx}`}
                 renderItem={({ item }) => <PosterCard movie={item} onPress={handleMoviePress} />}
               />
             </View>
@@ -489,6 +536,20 @@ const styles = StyleSheet.create({
   emptyText: { color: Colors.textMuted, fontSize: FontSizes.md },
   section: { marginBottom: Spacing.xxl },
   horizontalList: { paddingHorizontal: Spacing.xl },
+  exploreToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    marginTop: 2,
+  },
+  exploreToggleText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
 
   // ── Modal: smooth fade overlay ──────────────────────
   modalOverlay: {
