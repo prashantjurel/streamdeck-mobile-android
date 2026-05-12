@@ -15,32 +15,28 @@ export const syncWithCloud = async (userId) => {
     const snapshot = await get(userRef);
     const cloudData = snapshot.val() || {};
     
-    // 1. Watchlist Sync (Local is Truth)
-    // On an existing device, local state is always authoritative — push to cloud.
-    // On a brand new device (empty local list), restore from cloud.
+    // 1. Watchlist Sync (Intelligent Two-Way Merge)
     const localWatchlist = await loadWatchlist();
     const cloudWatchlist = cloudData.watchlist 
       ? (typeof cloudData.watchlist === 'string' ? JSON.parse(cloudData.watchlist) : cloudData.watchlist) 
       : [];
     
-    const rawLocalWatchlist = await AsyncStorage.getItem('my_watchlist');
+    // Merge by unique ID
+    const mergedWatchlistMap = new Map();
+    // Add cloud items first
+    cloudWatchlist.forEach(item => {
+      if (item && item.id) mergedWatchlistMap.set(item.id, item);
+    });
+    // Overlay local items (newer changes on current device win)
+    localWatchlist.forEach(item => {
+      if (item && item.id) mergedWatchlistMap.set(item.id, item);
+    });
     
-    let finalWatchlist;
-    if (!rawLocalWatchlist) {
-      // Brand new device (key is null) — no local data exists, so restore from cloud
-      finalWatchlist = cloudWatchlist;
-      console.log('[Sync] New device detected — restoring watchlist from cloud:', cloudWatchlist.length, 'items');
-    } else {
-      // Existing device — local is authoritative, push to cloud as-is
-      finalWatchlist = localWatchlist;
-      console.log('[Sync] Existing device — local watchlist is truth:', localWatchlist.length, 'items');
-    }
+    const finalWatchlist = Array.from(mergedWatchlistMap.values());
     await saveWatchlist(finalWatchlist);
 
-    // 2. Merge Settings (Intelligent Merge)
-    const rawLocalSettings = await AsyncStorage.getItem('streamdeck_settings');
-    const localSettings = await loadSettings(); // Guaranteed to return an object (defaults if raw is null)
-    
+    // 2. Settings Sync (Intelligent Merge)
+    const localSettings = await loadSettings();
     let cloudSettings = {};
     if (cloudData.settings) {
       cloudSettings = typeof cloudData.settings === 'string' 
@@ -48,16 +44,15 @@ export const syncWithCloud = async (userId) => {
         : cloudData.settings;
     }
     
-    // If device is brand new (rawLocalSettings is null), let Cloud overwrite local defaults.
-    // Otherwise, assume local device has the most recent intended state and let Local overwrite Cloud.
-    const mergedSettings = !rawLocalSettings 
-      ? { ...localSettings, ...cloudSettings } 
-      : { ...cloudSettings, ...localSettings };
+    // Deep merge: Cloud values exist + Local values exist.
+    // We prioritize local for the current session, but fill gaps from cloud.
+    const mergedSettings = { ...cloudSettings, ...localSettings };
 
-    // 3. Vaporize Ghost Keys
+    // 3. Vaporize Ghost Keys & API Keys (Privacy First)
     const strippedSettings = {};
     Object.keys(mergedSettings).forEach(key => {
       const lowerKey = key.toLowerCase();
+      // Don't sync internal transient state or keys that should be per-device if sensitive
       if (lowerKey.includes('apikey') || lowerKey.includes('tmdb')) return;
       strippedSettings[key] = mergedSettings[key];
     });

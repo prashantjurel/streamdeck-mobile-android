@@ -20,7 +20,7 @@ const SectionHeader = ({title, subtitle, style, rightAction, onPress, showChevro
             end={{x: 0, y: 1}}
             style={styles.accentBar}
           />
-          <Text style={styles.title}>{title}</Text>
+          <Text style={styles.title} numberOfLines={1}>{title}</Text>
           {showChevron && (
             <Text style={{ marginLeft: 6, color: Colors.accentPink, fontSize: 18, fontWeight: '700', marginTop: 2 }}>
               ˅
@@ -47,6 +47,8 @@ const styles = StyleSheet.create({
   leftTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
   },
   accentBar: {
     width: 4,
@@ -59,6 +61,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: Colors.textPrimary,
     letterSpacing: -0.3,
+    flexShrink: 1,
   },
   subtitle: {
     fontSize: FontSizes.sm,

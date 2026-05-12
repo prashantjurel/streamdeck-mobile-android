@@ -95,7 +95,7 @@ export async function toggleWatchlistItem(movie) {
 // ============================================
 // TMDB Cache (Daily, per region)
 // ============================================
-export async function getTMDBHomeCache(region) {
+export async function getTMDBHomeCache(region, langHash = '') {
   try {
     const dataStr = await AsyncStorage.getItem(KEYS.TMDB_HOME_CACHE);
     if (!dataStr) return null;
@@ -103,8 +103,8 @@ export async function getTMDBHomeCache(region) {
     const cache = JSON.parse(dataStr);
     const today = new Date().toLocaleDateString();
     
-    // Only return if date and region match
-    if (cache.date === today && cache.region === region) {
+    // Only return if date, region, AND language hash match
+    if (cache.date === today && cache.region === region && cache.langHash === langHash) {
       if (cache.global?.length > 0 && cache.local?.length > 0) {
         return cache;
       }
@@ -115,16 +115,15 @@ export async function getTMDBHomeCache(region) {
   return null;
 }
 
-export async function setTMDBHomeCache(region, global, local, netflix, prime) {
+export async function setTMDBHomeCache(region, global, local, langHash = '') {
   try {
     const today = new Date().toLocaleDateString();
     const cache = {
       date: today,
       region,
+      langHash,
       global,
       local,
-      netflix,
-      prime,
     };
     await AsyncStorage.setItem(KEYS.TMDB_HOME_CACHE, JSON.stringify(cache));
   } catch (e) {
@@ -195,7 +194,9 @@ export function getDefaultSettings() {
       { name: 'Cineby', url: 'cineby.sc', enabled: true },
       { name: 'MovieBox', url: 'moviebox.mov', enabled: false }
     ],
-    contentRegion: 'US',
+    contentRegion: 'IN',
+    preferredLanguages: ['hi'], // Default to Hindi for India region
+    recentLanguages: ['hi', 'te', 'ta', 'ml', 'kn', 'bn', 'en', 'ko', 'ja'],
     liveSportsProviders: [
       { name: 'SportsLiveToday', url: 'https://sportslivetoday.com', enabled: true },
     ],

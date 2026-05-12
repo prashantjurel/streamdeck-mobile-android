@@ -1,10 +1,105 @@
 // StreamDeck Mobile — TMDB API Service
-import { getApiKey, getTMDBHomeCache, setTMDBHomeCache } from '../utils/storage';
+import { getApiKey, getTMDBHomeCache, setTMDBHomeCache, loadSettings } from '../utils/storage';
 
 export const TMDB_BASE = 'https://api.tmdb.org/3';
 export const TMDB_IMAGE_BASE = 'https://image.tmdb.org/t/p/w500';
 export const TMDB_IMAGE_ORIGINAL = 'https://image.tmdb.org/t/p/original';
 export const TMDB_IMAGE_SMALL = 'https://image.tmdb.org/t/p/w200';
+
+const providerCache = {};
+
+/**
+ * Fetch all watch providers for a specific region dynamically from TMDB.
+ */
+export async function fetchRegionalProviders(region = 'IN') {
+  const apiKey = await getApiKey();
+  if (!apiKey) return [];
+  
+  const upperRegion = region.toUpperCase();
+  if (providerCache[upperRegion] && providerCache[upperRegion].length > 0) {
+    return providerCache[upperRegion];
+  }
+
+  try {
+    const res = await fetch(`${TMDB_BASE}/watch/providers/movie?api_key=${apiKey}&watch_region=${upperRegion}`);
+    const data = await res.json();
+    let providers = data.results || [];
+    
+    // If movies return nothing, try TV (rare but possible for some regions)
+    if (providers.length === 0) {
+      const tvRes = await fetch(`${TMDB_BASE}/watch/providers/tv?api_key=${apiKey}&watch_region=${upperRegion}`);
+      const tvData = await tvRes.json();
+      providers = tvData.results || [];
+    }
+
+    if (providers.length > 0) {
+      providerCache[upperRegion] = providers;
+    }
+    return providers;
+  } catch (e) {
+    console.error(`[TMDB] Failed to fetch providers for ${upperRegion}:`, e);
+    return [];
+  }
+}
+
+/**
+ * Fetch all available ISO languages from TMDB configuration.
+ */
+export async function fetchTMDBLanguages() {
+  const apiKey = await getApiKey();
+  if (!apiKey) return [];
+  
+  try {
+    const res = await fetch(`${TMDB_BASE}/configuration/languages?api_key=${apiKey}`);
+    const data = await res.json();
+    return data || [];
+  } catch (e) {
+    console.error('[TMDB] Failed to fetch languages:', e);
+    return [];
+  }
+}
+
+/**
+ * Fetch all available regions (countries) from TMDB configuration.
+ */
+export async function fetchTMDBRegions() {
+  const apiKey = await getApiKey();
+  if (!apiKey) return [];
+  
+  try {
+    const res = await fetch(`${TMDB_BASE}/watch/providers/regions?api_key=${apiKey}`);
+    const data = await res.json();
+    return data.results || [];
+  } catch (e) {
+    console.error('[TMDB] Failed to fetch regions:', e);
+    return [];
+  }
+}
+
+/**
+ * Resolves canonical provider names to their region-specific TMDB IDs.
+ */
+async function resolveProviderIds(region, providerNames) {
+  const regionalProviders = await fetchRegionalProviders(region);
+  const resolvedIds = [];
+
+  for (const name of providerNames) {
+    // Exact or partial match
+    const found = regionalProviders.find(p => 
+      p.provider_name.toLowerCase() === name.toLowerCase() ||
+      (name === 'JioHotstar' && (p.provider_name.includes('Hotstar') || p.provider_name.includes('Jio'))) ||
+      (name === 'Prime Video' && p.provider_name.includes('Amazon Prime'))
+    );
+    if (found) resolvedIds.push(found.provider_id);
+  }
+
+  // Fallback for JioHotstar if not found (keep legacy IDs just in case)
+  if (providerNames.includes('JioHotstar') && !resolvedIds.some(id => [122, 337, 220, 2336].includes(id))) {
+    resolvedIds.push(122, 337, 220, 2336);
+  }
+
+  return resolvedIds.join('|');
+}
 
 /**
  * Fetch trending content globally, locally, and for specific platforms.
@@ -12,9 +107,19 @@ export const TMDB_IMAGE_SMALL = 'https://image.tmdb.org/t/p/w200';
  * forceRefresh bypasses the cache for manual pulses.
  */
 export async function fetchTrendingContent(region = 'IN', forceRefresh = false) {
+  const settings = await loadSettings();
+  const preferredLangs = settings.preferredLanguages || [];
+  
+  const langMap = {
+    IN: preferredLangs.length > 0 ? preferredLangs.join('|') : 'hi|te|ta|ml|kn|bn',
+    US: 'en', GB: 'en', AU: 'en', CA: 'en', KR: 'ko', JP: 'ja'
+  };
+  
+  const langQuery = langMap[region] || (preferredLangs.length > 0 ? preferredLangs.join('|') : 'en');
+
   // Check cache first (skip if forceRefresh is true)
   if (!forceRefresh) {
-    const cache = await getTMDBHomeCache(region);
+    const cache = await getTMDBHomeCache(region, langQuery);
     if (cache) {
       return cache;
     }
@@ -26,21 +131,16 @@ export async function fetchTrendingContent(region = 'IN', forceRefresh = false) 
   try {
     console.log(`[TMDB] Fetching ${forceRefresh ? 'FRESH' : 'daily'} content for ${region}`);
     
-    // We use a broad list of watch providers for the local mix to ensure rich results.
-    // Dynamically generate provider list from our official config
-    const providerIds = OTT_PROVIDERS.map(p => p.id).join('|');
-    const encodedProviders = encodeURIComponent(providerIds).replace(/%7C/g, '|');
+    // Dynamically resolve provider IDs for the current region
+    const providerNames = OTT_PROVIDERS.map(p => p.name);
+    const resolvedIds = await resolveProviderIds(region, providerNames);
+    const encodedProviders = encodeURIComponent(resolvedIds).replace(/%7C/g, '|');
 
-    const langMap = {
-      IN: 'hi|te|ta|ml|kn|bn',
-      US: 'en',
-      GB: 'en',
-      AU: 'en',
-      CA: 'en',
-      KR: 'ko',
-      JP: 'ja'
-    };
-    const localLang = langMap[region] ? `&with_original_language=${langMap[region]}` : '';
+    const futureDate = new Date();
+    futureDate.setMonth(futureDate.getMonth() + 6);
+    const dateStr = futureDate.toISOString().split('T')[0];
+
+    const langFilter = langQuery ? `&with_original_language=${langQuery}` : '';
 
     const [
       globalRes, 
@@ -50,11 +150,9 @@ export async function fetchTrendingContent(region = 'IN', forceRefresh = false) 
       // Global pulse
       fetch(`${TMDB_BASE}/trending/all/day?api_key=${apiKey}`),
       
-      // Local/Regional trending: We removed language and date restrictions to ensure
-      // the rows are as rich as possible, allowing global hits to surface alongside local ones.
-      // We also added monetization=flatrate|free which is required by TMDB discovery in some regions.
-      fetch(`${TMDB_BASE}/discover/movie?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProviders}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc`),
-      fetch(`${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProviders}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc`)
+      // Local/Regional trending: Exact parameters matched to TMDB website payload
+      fetch(`${TMDB_BASE}/discover/movie?api_key=${apiKey}&watch_region=${region}&certification_country=${region}&release_date.lte=${dateStr}${langFilter}&sort_by=popularity.desc&include_adult=false`),
+      fetch(`${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&certification_country=${region}&first_air_date.lte=${dateStr}${langFilter}&sort_by=popularity.desc&include_adult=false`)
     ]);
 
     if (globalRes.status === 401) {
@@ -72,7 +170,7 @@ export async function fetchTrendingContent(region = 'IN', forceRefresh = false) 
     ].sort((a, b) => b.popularity - a.popularity);
     
     if (global.length > 0 && local.length > 0) {
-      await setTMDBHomeCache(region, global, local);
+      await setTMDBHomeCache(region, global, local, langQuery);
     }
 
     return { global, local };
@@ -261,8 +359,11 @@ export async function fetchProviderContent(region = 'IN', providerId = 8) {
   oneYearAgo.setMonth(oneYearAgo.getMonth() - 12);
   const freshnessDate = oneYearAgo.toISOString().split('T')[0];
 
+    const settings = await loadSettings();
+    const preferredLangs = settings.preferredLanguages || [];
+
     const langMap = {
-      IN: 'hi|te|ta|ml|kn|bn',
+      IN: preferredLangs.length > 0 ? preferredLangs.join('|') : '',
       US: 'en',
       GB: 'en',
       AU: 'en',
@@ -270,14 +371,18 @@ export async function fetchProviderContent(region = 'IN', providerId = 8) {
       KR: 'ko',
       JP: 'ja'
     };
-    const localLang = langMap[region] ? `&with_original_language=${langMap[region]}` : '';
+    const localLang = langMap[region] ? `&with_original_language=${langMap[region]}` : (preferredLangs.length > 0 ? `&with_original_language=${preferredLangs.join('|')}` : '');
 
     try {
-      const encodedProvider = encodeURIComponent(providerId).replace(/%7C/g, '|');
+      // Resolve provider ID for the current region dynamically
+      const providerObj = OTT_PROVIDERS.find(p => p.id === providerId);
+      const resolvedProviderId = await resolveProviderIds(region, [providerObj?.name || '']);
+      
+      const encodedProvider = encodeURIComponent(resolvedProviderId || providerId).replace(/%7C/g, '|');
       
       // monetization=flatrate|free is critical for many regions to return any results via discover
-      const movieUrl = `${TMDB_BASE}/discover/movie?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc`;
-      const tvUrl = `${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc`;
+      const movieUrl = `${TMDB_BASE}/discover/movie?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc${localLang}`;
+      const tvUrl = `${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc${localLang}`;
 
       const [movieRes, tvRes] = await Promise.all([
         fetch(movieUrl).catch(() => null),

@@ -13,6 +13,7 @@ import {
   Linking,
   Image,
   ActivityIndicator,
+  Modal,
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -41,6 +42,7 @@ import { useFocusEffect } from '@react-navigation/native';
 import { signInWithGoogle, signOut, onAuthStateChanged, configureGoogleSignIn } from '../services/auth';
 import { syncWithCloud } from '../services/sync';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import { fetchTMDBLanguages, fetchTMDBRegions } from '../services/tmdb';
 
 const REGIONS = [
   { code: 'IN', name: 'India', flag: '🇮🇳' },
@@ -49,6 +51,8 @@ const REGIONS = [
   { code: 'AU', name: 'Australia', flag: '🇦🇺' },
   { code: 'CA', name: 'Canada', flag: '🇨🇦' },
 ];
+
+
 
 const CollapsibleHeader = ({ title, sectionKey, isExpanded, onToggle, subtitle }) => (
   <TouchableOpacity 
@@ -138,6 +142,16 @@ const SettingsScreen = ({ navigation }) => {
     data: false
   });
 
+  const [tmdbLanguages, setTmdbLanguages] = useState([]);
+  const [langSearch, setLangSearch] = useState('');
+  const [loadingLangs, setLoadingLangs] = useState(false);
+  const [showLangModal, setShowLangModal] = useState(false);
+
+  const [tmdbRegions, setTmdbRegions] = useState([]);
+  const [regionSearch, setRegionSearch] = useState('');
+  const [showRegionModal, setShowRegionModal] = useState(false);
+  const [loadingRegions, setLoadingRegions] = useState(false);
+
   const toggleSection = (key) => {
     setExpandedSections(prev => ({
       ...prev,
@@ -201,6 +215,76 @@ const SettingsScreen = ({ navigation }) => {
     setSyncing(false);
     loadData(); // Ensure UI reflects any merged cloud data
   };
+
+  useEffect(() => {
+    (async () => {
+      setLoadingLangs(true);
+      try {
+        const langs = await fetchTMDBLanguages();
+        // Sort: Put major Indian languages first if they exist
+        const priority = ['hi', 'te', 'ta', 'ml', 'kn', 'bn', 'en', 'ko', 'ja'];
+        const sorted = langs.sort((a, b) => {
+          const aIdx = priority.indexOf(a.iso_639_1);
+          const bIdx = priority.indexOf(b.iso_639_1);
+          if (aIdx !== -1 && bIdx !== -1) return aIdx - bIdx;
+          if (aIdx !== -1) return -1;
+          if (bIdx !== -1) return 1;
+          return a.english_name.localeCompare(b.english_name);
+        });
+        setTmdbLanguages(sorted);
+      } finally {
+        setLoadingLangs(false);
+      }
+
+      setLoadingRegions(true);
+      try {
+        const regions = await fetchTMDBRegions();
+        setTmdbRegions(regions.sort((a, b) => a.native_name.localeCompare(b.native_name)));
+      } finally {
+        setLoadingRegions(false);
+      }
+    })();
+  }, []);
+
+
+  const filteredLangs = tmdbLanguages.filter(l => 
+    l.english_name.toLowerCase().includes(langSearch.toLowerCase()) ||
+    l.iso_639_1.toLowerCase().includes(langSearch.toLowerCase())
+  );
+
+  const handleLanguageSelect = (langCode) => {
+    setSettings(prev => {
+      if (!langCode) {
+        return { ...prev, preferredLanguages: [] };
+      }
+      const recent = prev.recentLanguages || [];
+      const updatedRecent = [langCode, ...recent.filter(c => c !== langCode)].slice(0, 10);
+      return { 
+        ...prev, 
+        preferredLanguages: [langCode],
+        recentLanguages: updatedRecent
+      };
+    });
+    setShowLangModal(false);
+    setLangSearch('');
+  };
+
+  const currentLangName = settings.preferredLanguages?.length > 0 
+    ? (tmdbLanguages.find(l => l.iso_639_1 === settings.preferredLanguages[0])?.english_name || 'Selected')
+    : 'All Languages';
+
+  const filteredRegions = tmdbRegions.filter(r => 
+    r.english_name.toLowerCase().includes(regionSearch.toLowerCase()) ||
+    r.iso_3166_1.toLowerCase().includes(regionSearch.toLowerCase()) ||
+    r.native_name.toLowerCase().includes(regionSearch.toLowerCase())
+  );
+
+
+  const currentRegionName = tmdbRegions.find(r => r.iso_3166_1 === settings.contentRegion)?.english_name || 
+                           REGIONS.find(r => r.code === settings.contentRegion)?.name || 'India';
+
+
+
 
   useEffect(() => {
     loadData();
@@ -526,38 +610,60 @@ const SettingsScreen = ({ navigation }) => {
           )}
         </View>
 
-        {/* Content Region */}
+        {/* Discovery Settings (Consolidated) */}
         <View style={styles.section}>
           <CollapsibleHeader 
-            title="CONTENT REGION" 
-            sectionKey="region" 
-            isExpanded={expandedSections.region}
+            title="DISCOVERY SETTINGS" 
+            sectionKey="discovery" 
+            isExpanded={expandedSections.discovery}
             onToggle={toggleSection}
+            subtitle={`${currentRegionName} • ${currentLangName}`}
           />
-          {expandedSections.region && (
+          {expandedSections.discovery && (
             <View style={styles.card}>
-              <Text style={styles.fieldLabel}>Trending Region</Text>
-              <Text style={styles.fieldHint}>
-                The country used for platform recommendations.
-              </Text>
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: Spacing.sm }}>
-                {REGIONS.map(region => {
-                  const isActive = settings.contentRegion === region.code;
-                  return (
-                    <TouchableOpacity
-                      key={region.code}
-                      onPress={() => setSettings(prev => ({ ...prev, contentRegion: region.code }))}
-                      style={[styles.regionChip, isActive && styles.regionChipActive]}
-                      activeOpacity={0.7}>
-                      <Text style={[styles.regionFlag, isActive && { opacity: 1 }]}>{region.flag}</Text>
-                      <Text style={[styles.regionName, isActive && styles.regionNameActive]}>{region.name}</Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
+              <View style={styles.discoveryActionRow}>
+                {/* Region Selector Card */}
+                <TouchableOpacity 
+                  style={styles.discoveryActionCard}
+                  onPress={() => setShowRegionModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.actionIconBox, { backgroundColor: 'rgba(74, 222, 128, 0.1)' }]}>
+                    <Ionicons name="earth" size={18} color="#4ADE80" />
+                  </View>
+                  <View style={styles.actionTextContent}>
+                    <Text style={styles.actionLabel}>Region</Text>
+                    <Text style={styles.actionValue} numberOfLines={1}>{currentRegionName}</Text>
+                  </View>
+                </TouchableOpacity>
+
+                {/* Language Selector Card */}
+                <TouchableOpacity 
+                  style={styles.discoveryActionCard}
+                  onPress={() => setShowLangModal(true)}
+                  activeOpacity={0.7}
+                >
+                  <View style={[styles.actionIconBox, { backgroundColor: 'rgba(157, 78, 221, 0.1)' }]}>
+                    <Ionicons name="language" size={18} color={Colors.accentPurple} />
+                  </View>
+                  <View style={styles.actionTextContent}>
+                    <Text style={styles.actionLabel}>Language</Text>
+                    <Text style={styles.actionValue} numberOfLines={1}>{currentLangName}</Text>
+                  </View>
+                </TouchableOpacity>
+              </View>
+              
+              <View style={styles.discoveryFooter}>
+                <Ionicons name="information-circle-outline" size={12} color="rgba(255,255,255,0.2)" style={{ marginRight: 6 }} />
+                <Text style={styles.discoveryFooterText}>
+                  Home feed is synchronized with these regional preferences.
+                </Text>
+              </View>
             </View>
+
           )}
         </View>
+
 
         {/* Streaming Sources */}
         <View
@@ -681,9 +787,6 @@ const SettingsScreen = ({ navigation }) => {
         {/* App Info */}
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>StreamDeck Mobile v{DeviceInfo.getVersion()}</Text>
-          <Text style={styles.infoSubtext}>
-            A mobile companion to the StreamDeck Desktop Hub
-          </Text>
         </View>
 
         <View style={{ height: 120 }} />
@@ -699,6 +802,203 @@ const SettingsScreen = ({ navigation }) => {
         cancelText={alertConfig.cancelText}
         type={alertConfig.type}
       />
+
+      {/* Language Picker Modal */}
+      <Modal
+        visible={showLangModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowLangModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity 
+            style={styles.modalDismissZone} 
+            activeOpacity={1} 
+            onPress={() => setShowLangModal(false)} 
+          />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={styles.modalHandle} />
+              <Text style={styles.modalTitle}>Discovery Language</Text>
+            </View>
+
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="rgba(255,255,255,0.3)" style={{ marginLeft: 16 }} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search 200+ languages..."
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                value={langSearch}
+                onChangeText={setLangSearch}
+                autoCorrect={false}
+              />
+              {langSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setLangSearch('')} style={{ padding: 10 }}>
+                  <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {loadingLangs ? (
+                <ActivityIndicator color={Colors.accentPurple} style={{ marginTop: 40 }} />
+              ) : (
+                <>
+                  {/* Global Discovery Option */}
+                  {!langSearch && (
+                    <TouchableOpacity 
+                      style={[styles.langItem, (!settings.preferredLanguages || settings.preferredLanguages.length === 0) && styles.langItemActive]}
+                      onPress={() => handleLanguageSelect(null)}
+                    >
+                      <View style={[styles.langItemCodeBox, { backgroundColor: 'rgba(157, 78, 221, 0.1)', width: 32, height: 20, borderRadius: 4, alignItems: 'center', justifyContent: 'center', marginRight: 12 }]}>
+                        <Ionicons name="globe-outline" size={12} color={Colors.accentPurple} />
+                      </View>
+                      <Text style={[styles.langItemText, (!settings.preferredLanguages || settings.preferredLanguages.length === 0) && styles.langItemTextActive]}>
+                        All Languages (Global)
+                      </Text>
+                      {(!settings.preferredLanguages || settings.preferredLanguages.length === 0) && (
+                        <Ionicons name="checkmark-circle" size={20} color={Colors.accentPurple} />
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  {/* Recently Used Section */}
+                  {!langSearch && (settings.recentLanguages || []).length > 0 && (
+                    <View style={{ marginBottom: 24, marginTop: 16 }}>
+                      <Text style={styles.langSectionTitle}>Recently Used</Text>
+                      {(settings.recentLanguages || []).map(code => {
+                        const lang = tmdbLanguages.find(l => l.iso_639_1 === code);
+                        if (!lang) return null;
+                        const isActive = settings.preferredLanguages?.[0] === code;
+                        return (
+                          <TouchableOpacity 
+                            key={`recent-${code}`}
+                            style={[styles.langItem, isActive && styles.langItemActive]}
+                            onPress={() => handleLanguageSelect(code)}
+                          >
+                            <Text style={styles.langItemCode}>{code.toUpperCase()}</Text>
+                            <Text style={[styles.langItemText, isActive && styles.langItemTextActive]}>
+                              {lang.english_name}
+                            </Text>
+                            {isActive && <Ionicons name="checkmark-circle" size={20} color={Colors.accentPurple} />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  {/* Search Results / All Section */}
+                  <Text style={styles.langSectionTitle}>
+                    {langSearch ? 'Search Results' : 'All Languages'}
+                  </Text>
+                  {filteredLangs.slice(0, 100).map(lang => {
+                    const isActive = settings.preferredLanguages?.[0] === lang.iso_639_1;
+                    return (
+                      <TouchableOpacity 
+                        key={lang.iso_639_1}
+                        style={[styles.langItem, isActive && styles.langItemActive]}
+                        onPress={() => handleLanguageSelect(lang.iso_639_1)}
+                      >
+                        <Text style={styles.langItemCode}>{lang.iso_639_1.toUpperCase()}</Text>
+                        <Text style={[styles.langItemText, isActive && styles.langItemTextActive]}>
+                          {lang.english_name}
+                        </Text>
+                        {isActive && <Ionicons name="checkmark-circle" size={20} color={Colors.accentPurple} />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                  
+                  {filteredLangs.length === 0 && (
+                    <View style={{ alignItems: 'center', marginTop: 40 }}>
+                      <Ionicons name="search-outline" size={48} color="rgba(255,255,255,0.1)" />
+                      <Text style={{ color: 'rgba(255,255,255,0.3)', marginTop: 12, fontWeight: '600' }}>No languages found</Text>
+                    </View>
+                  )}
+                </>
+              )}
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Region Picker Modal */}
+      <Modal
+        visible={showRegionModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRegionModal(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <TouchableOpacity 
+            style={styles.modalDismissZone} 
+            activeOpacity={1} 
+            onPress={() => setShowRegionModal(false)} 
+          />
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <View style={[styles.modalHandle, { backgroundColor: '#4ADE80' }]} />
+              <Text style={styles.modalTitle}>Select Region</Text>
+            </View>
+
+            <View style={styles.searchContainer}>
+              <Ionicons name="search" size={20} color="rgba(255,255,255,0.3)" style={{ marginLeft: 16 }} />
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search countries..."
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                value={regionSearch}
+                onChangeText={setRegionSearch}
+                autoCorrect={false}
+              />
+              {regionSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setRegionSearch('')} style={{ padding: 10 }}>
+                  <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {loadingRegions ? (
+                <ActivityIndicator color="#4ADE80" style={{ marginTop: 40 }} />
+              ) : (
+                <>
+                  <Text style={styles.langSectionTitle}>All Regions</Text>
+                  {filteredRegions.map(reg => {
+                    const isActive = settings.contentRegion === reg.iso_3166_1;
+                    return (
+                      <TouchableOpacity 
+                        key={reg.iso_3166_1}
+                        style={[styles.langItem, isActive && styles.langItemActive]}
+                        onPress={() => {
+                          setSettings(prev => ({ ...prev, contentRegion: reg.iso_3166_1 }));
+                          setShowRegionModal(false);
+                          setRegionSearch('');
+                        }}
+                      >
+                        <Text style={styles.langItemCode}>{reg.iso_3166_1}</Text>
+                        <Text style={[styles.langItemText, isActive && styles.langItemTextActive]}>
+                          {reg.english_name}
+                        </Text>
+                        {isActive && <Ionicons name="checkmark-circle" size={20} color="#4ADE80" />}
+                      </TouchableOpacity>
+                    );
+                  })}
+                  
+                  {filteredRegions.length === 0 && (
+                    <View style={{ alignItems: 'center', marginTop: 40 }}>
+                      <Ionicons name="search-outline" size={48} color="rgba(255,255,255,0.1)" />
+                      <Text style={{ color: 'rgba(255,255,255,0.3)', marginTop: 12, fontWeight: '600' }}>No regions found</Text>
+                    </View>
+                  )}
+                </>
+              )}
+              <View style={{ height: 40 }} />
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
     </View>
   );
 };
@@ -1091,6 +1391,127 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.md,
     lineHeight: 22,
   },
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    height: 48,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    marginBottom: 12,
+  },
+  searchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 14,
+    paddingHorizontal: 12,
+  },
+  dropdownToggle: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    padding: 14,
+    marginTop: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  dropdownIconBox: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: 'rgba(139, 92, 246, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
+  dropdownValue: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '800',
+    marginBottom: 2,
+  },
+  dropdownSubtext: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+    justifyContent: 'flex-end',
+  },
+  modalDismissZone: {
+    flex: 1,
+  },
+  modalContent: {
+    backgroundColor: '#121214',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 16,
+    paddingBottom: 40,
+    maxHeight: '85%',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  modalHeader: {
+    alignItems: 'center',
+    marginBottom: 24,
+  },
+  modalHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: Colors.accentPurple,
+    borderRadius: 2,
+    marginBottom: 20,
+    opacity: 0.6,
+  },
+  modalTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  langSectionTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: Colors.accentPurple,
+    letterSpacing: 1,
+    marginBottom: 16,
+    marginTop: 8,
+    textTransform: 'uppercase',
+  },
+  langItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.03)',
+  },
+  langItemActive: {
+    backgroundColor: 'rgba(139, 92, 246, 0.05)',
+    marginHorizontal: -24,
+    paddingHorizontal: 24,
+  },
+  langItemText: {
+    fontSize: 16,
+    color: 'rgba(255,255,255,0.7)',
+    fontWeight: '600',
+    flex: 1,
+  },
+  langItemTextActive: {
+    color: '#fff',
+    fontWeight: '800',
+  },
+  langItemCode: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.2)',
+    fontWeight: '800',
+    marginRight: 12,
+    fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace',
+  },
   manageBtn: {
     marginTop: 16,
     borderRadius: 14,
@@ -1161,21 +1582,47 @@ const styles = StyleSheet.create({
     marginRight: Spacing.sm,
   },
   regionChipActive: {
-    backgroundColor: 'rgba(157, 78, 221, 0.2)',
-    borderColor: Colors.accentPurple,
+    backgroundColor: 'rgba(217, 70, 239, 0.15)',
+    borderColor: Colors.accentPink,
   },
   regionFlag: {
-    fontSize: 16,
-    marginRight: 6,
-    opacity: 0.7,
+    fontSize: 20,
+    opacity: 0.5,
   },
   regionName: {
-    fontSize: FontSizes.md,
     color: Colors.textMuted,
-    fontWeight: '600',
+    fontSize: 14,
+    fontWeight: '700',
   },
   regionNameActive: {
-    color: Colors.accentPurple,
+    color: '#fff',
+  },
+  languageGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 12,
+  },
+  langChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  langChipActive: {
+    backgroundColor: 'rgba(139, 92, 246, 0.15)',
+    borderColor: Colors.accentPurple,
+  },
+  langText: {
+    color: Colors.textMuted,
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  langTextActive: {
+    color: '#fff',
+    fontWeight: '900',
   },
   pingContainer: {
     marginTop: Spacing.md,
@@ -1363,6 +1810,57 @@ const styles = StyleSheet.create({
     marginTop: 4,
     opacity: 0.6,
   },
+  discoveryActionRow: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  discoveryActionCard: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 14,
+    padding: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  actionIconBox: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  actionTextContent: {
+    flex: 1,
+  },
+  actionLabel: {
+    color: Colors.textSecondary,
+    fontSize: 9,
+    fontFamily: 'Inter-Bold',
+    textTransform: 'uppercase',
+    letterSpacing: 0.8,
+    marginBottom: 1,
+  },
+  actionValue: {
+    color: '#fff',
+    fontSize: 13,
+    fontFamily: 'Inter-SemiBold',
+  },
+  discoveryFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingTop: 8,
+  },
+  discoveryFooterText: {
+    color: Colors.textSecondary,
+    fontSize: 10,
+    fontFamily: 'Inter-Medium',
+  },
+
 });
 
 export default SettingsScreen;

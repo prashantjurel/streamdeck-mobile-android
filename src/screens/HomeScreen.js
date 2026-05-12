@@ -1,5 +1,5 @@
 // StreamDeck Mobile — Home Screen
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -17,6 +17,7 @@ import {
   Alert,
   Image,
   Dimensions,
+  TextInput,
   Animated as RNAnimated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -35,14 +36,60 @@ import { Colors, Spacing } from '../theme/colors';
 import HeroSpotlight from '../components/HeroSpotlight';
 import ContinueWatchingRow from '../components/ContinueWatchingRow';
 import TrendingRow from '../components/TrendingRow';
-import { fetchTrendingContent, fetchWatchProviders, getImageUrl, OTT_PROVIDERS, fetchProviderContent } from '../services/tmdb';
+import { fetchTrendingContent, fetchWatchProviders, getImageUrl, OTT_PROVIDERS, fetchProviderContent, fetchRegionalProviders } from '../services/tmdb';
 import { loadContinueWatching, loadSettings, toggleWatchlistItem, loadWatchlist } from '../utils/storage';
 import UpdateModal from '../components/UpdateModal';
 import { fetchLiveSportsData } from '../services/sports';
 import { useApi } from '../context/ApiContext';
+import { getCurrentUser, onAuthStateChanged } from '../services/auth';
+import { syncWithCloud } from '../services/sync';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
+
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+
+const MEDIA_TYPES = [
+  { id: 'all', name: 'All', icon: 'flash' },
+  { id: 'live', name: 'Live', icon: 'radio' },
+  { id: 'movies_series', name: 'Movies & TV', icon: 'film' },
+];
+
+const getCustomProviderAppearance = (name, url) => {
+  const searchSource = (name + url).toLowerCase();
+  let icon = 'movie-open-play'; // Premium default
+  
+  if (searchSource.includes('cric')) icon = 'trophy';
+  else if (searchSource.includes('foot') || searchSource.includes('soccer')) icon = 'football';
+  else if (searchSource.includes('f1') || searchSource.includes('race')) icon = 'speedometer';
+  else if (searchSource.includes('sport')) icon = 'ribbon';
+  else if (searchSource.includes('tv') || searchSource.includes('live')) icon = 'television-play';
+  else if (searchSource.includes('flix') || searchSource.includes('cine')) icon = 'video-box';
+  else if (searchSource.includes('box')) icon = 'play-box-multiple';
+  else if (searchSource.includes('stream') || searchSource.includes('watch')) icon = 'play-circle';
+  else {
+    // Deterministic choice based on name length for variety
+    const icons = ['movie-open-play', 'video-box', 'play-box-multiple', 'movie-filter'];
+    icon = icons[name.length % icons.length];
+  }
+
+  const colors = ['#E21D48', '#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#14b8a6', '#6366f1'];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  return { icon, color: colors[Math.abs(hash) % colors.length] };
+};
+
+const RenderSkeletonItem = ({ style, itemAnimatedStyle, shimmerStyle }) => (
+  <Animated.View style={[style, itemAnimatedStyle]}>
+    <Animated.View style={[StyleSheet.absoluteFill, shimmerStyle]}>
+      <LinearGradient
+        colors={['transparent', 'rgba(255,255,255,0.06)', 'transparent']}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 0 }}
+        style={StyleSheet.absoluteFill}
+      />
+    </Animated.View>
+  </Animated.View>
+);
 
 const HomeSkeleton = ({ visible }) => {
   const insets = useSafeAreaInsets();
@@ -52,17 +99,17 @@ const HomeSkeleton = ({ visible }) => {
   const pulse = useSharedValue(0.4);
 
   useEffect(() => {
-    opacity.value = withTiming(visible ? 1 : 0, { duration: 600 });
+    opacity.value = withTiming(visible ? 1 : 0, { duration: 400 });
 
     shimmer.value = withRepeat(
-      withTiming(1, { duration: 2000, easing: Easing.bezier(0.4, 0, 0.2, 1) }),
+      withTiming(1, { duration: 1500, easing: Easing.bezier(0.4, 0, 0.2, 1) }),
       -1,
       false
     );
     pulse.value = withRepeat(
       withSequence(
-        withTiming(0.7, { duration: 1000, easing: Easing.inOut(Easing.ease) }),
-        withTiming(0.4, { duration: 1000, easing: Easing.inOut(Easing.ease) })
+        withTiming(0.6, { duration: 800, easing: Easing.inOut(Easing.ease) }),
+        withTiming(0.4, { duration: 800, easing: Easing.inOut(Easing.ease) })
       ),
       -1,
       true
@@ -74,7 +121,7 @@ const HomeSkeleton = ({ visible }) => {
   }));
 
   const itemAnimatedStyle = useAnimatedStyle(() => ({
-    backgroundColor: 'rgba(255,255,255,0.06)',
+    backgroundColor: 'rgba(255,255,255,0.04)',
     opacity: pulse.value,
     overflow: 'hidden',
   }));
@@ -83,18 +130,7 @@ const HomeSkeleton = ({ visible }) => {
     transform: [{ translateX: interpolate(shimmer.value, [-1, 1], [-500, 500]) }],
   }));
 
-  const RenderSkeletonItem = ({ style }) => (
-    <Animated.View style={[style, itemAnimatedStyle]}>
-      <Animated.View style={[StyleSheet.absoluteFill, shimmerStyle]}>
-        <LinearGradient
-          colors={['transparent', 'rgba(255,255,255,0.08)', 'transparent']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={StyleSheet.absoluteFill}
-        />
-      </Animated.View>
-    </Animated.View>
-  );
+
 
   return (
     <Animated.View
@@ -107,29 +143,44 @@ const HomeSkeleton = ({ visible }) => {
         contentContainerStyle={{ paddingTop: topPadding + 10, paddingBottom: 100 }}
         style={{ width: '100%' }}
       >
+        {/* Header Skeleton */}
+        <View style={styles.skeletonHeader}>
+          <RenderSkeletonItem style={styles.skeletonLogo} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+          <View style={styles.skeletonIcons}>
+            <RenderSkeletonItem style={styles.skeletonCircle} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+            <RenderSkeletonItem style={styles.skeletonCircle} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+          </View>
+        </View>
+
         {/* Category Chips Skeleton */}
         <View style={styles.skeletonCategoryRow}>
-          {[1, 2, 3, 4].map(i => (
-            <RenderSkeletonItem key={i} style={styles.skeletonChip} />
+          {[1, 2, 3].map(i => (
+            <RenderSkeletonItem key={i} style={styles.skeletonChip} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
           ))}
         </View>
 
         {/* Hero Spotlight Skeleton */}
         <View style={styles.skeletonHeroContainer}>
-          <RenderSkeletonItem style={styles.skeletonHero} />
+          <RenderSkeletonItem style={styles.skeletonHero} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
           <View style={styles.skeletonHeroMeta}>
-            <RenderSkeletonItem style={styles.skeletonTextLineLong} />
-            <RenderSkeletonItem style={styles.skeletonTextLineShort} />
+             <View style={styles.skeletonHeroRow}>
+                <RenderSkeletonItem style={styles.skeletonBadge} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+             </View>
+            <RenderSkeletonItem style={styles.skeletonTextLineLong} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+            <View style={styles.skeletonHeroRow}>
+              <RenderSkeletonItem style={styles.skeletonTextLineShort} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+              <RenderSkeletonItem style={styles.skeletonHeroPlay} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+            </View>
           </View>
         </View>
 
         {/* Continue Watching Skeleton */}
         <View style={styles.skeletonRowContainer}>
-          <RenderSkeletonItem style={styles.skeletonRowTitle} />
+          <RenderSkeletonItem style={styles.skeletonRowTitle} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
             {[1, 2].map(i => (
               <View key={i} style={styles.skeletonCWCardContainer}>
-                <RenderSkeletonItem style={styles.skeletonCWCard} />
+                <RenderSkeletonItem style={styles.skeletonCWCard} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
               </View>
             ))}
           </ScrollView>
@@ -138,12 +189,12 @@ const HomeSkeleton = ({ visible }) => {
         {/* Rows Skeleton (Posters) */}
         {[1, 2].map(row => (
           <View key={row} style={styles.skeletonRowContainer}>
-            <RenderSkeletonItem style={styles.skeletonRowTitle} />
+            <RenderSkeletonItem style={styles.skeletonRowTitle} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 20 }}>
               {[1, 2, 3].map(i => (
                 <View key={i} style={styles.skeletonCardContainer}>
-                  <RenderSkeletonItem style={styles.skeletonCard} />
-                  <RenderSkeletonItem style={styles.skeletonCardText} />
+                  <RenderSkeletonItem style={styles.skeletonCard} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
+                  <RenderSkeletonItem style={styles.skeletonCardText} itemAnimatedStyle={itemAnimatedStyle} shimmerStyle={shimmerStyle} />
                 </View>
               ))}
             </ScrollView>
@@ -157,8 +208,11 @@ const HomeSkeleton = ({ visible }) => {
 const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
   const isSelected = selectedMediaType === cat.id;
   const rotation = useSharedValue(0);
+  const glowOpacity = useSharedValue(0);
 
   useEffect(() => {
+    glowOpacity.value = withTiming(isSelected ? 1 : 0, { duration: 300 });
+    
     if (isSelected) {
       rotation.value = withRepeat(
         withTiming(360, { duration: 3000, easing: Easing.linear }),
@@ -166,12 +220,14 @@ const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
         false
       );
     } else {
-      rotation.value = 0;
+      // Don't reset rotation to 0 immediately to avoid jumpy transitions
+      // Just let it stop or keep it at current value while fading out
     }
   }, [isSelected]);
 
-  const animatedStyle = useAnimatedStyle(() => ({
+  const animatedGlowStyle = useAnimatedStyle(() => ({
     transform: [{ rotate: `${rotation.value}deg` }],
+    opacity: glowOpacity.value,
   }));
 
   return (
@@ -181,16 +237,14 @@ const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
       style={styles.categoryChipContainer}
     >
       <View style={[styles.categoryChip, isSelected && styles.categoryChipActive]}>
-        {isSelected && (
-          <Animated.View style={[styles.glowBorder, animatedStyle]}>
-            <LinearGradient
-              colors={['#8b5cf6', 'transparent', '#ec4899', 'transparent', '#8b5cf6']}
-              style={{ flex: 1 }}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            />
-          </Animated.View>
-        )}
+        <Animated.View style={[styles.glowBorder, animatedGlowStyle]}>
+          <LinearGradient
+            colors={['#8b5cf6', 'transparent', '#ec4899', 'transparent', '#8b5cf6']}
+            style={{ flex: 1 }}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          />
+        </Animated.View>
         <View style={[styles.categoryChipInner, isSelected && styles.categoryChipInnerActive]}>
           <Ionicons 
             name={cat.icon} 
@@ -215,7 +269,7 @@ const HomeScreen = ({ navigation }) => {
   const [globalTrending, setGlobalTrending] = useState([]);
   const [localTrending, setLocalTrending] = useState([]);
   const [providerTrendingCache, setProviderTrendingCache] = useState({});
-  const [activeProvider, setActiveProvider] = useState(OTT_PROVIDERS[0]);
+  const [activeProvider, setActiveProvider] = useState({ id: 8, name: 'Netflix' });
   const [showProviderDropdown, setShowProviderDropdown] = useState(false);
   const [loadingProvider, setLoadingProvider] = useState(false);
   const [regionName, setRegionName] = useState('India');
@@ -234,104 +288,149 @@ const HomeScreen = ({ navigation }) => {
   const [selectedMediaType, setSelectedMediaType] = useState('all'); // 'all', 'movie', 'tv'
   const [watchlist, setWatchlist] = useState([]);
   const [regionCode, setRegionCode] = useState('IN');
+  const [regionalProviders, setRegionalProviders] = useState([]);
+  const [providerSearch, setProviderSearch] = useState('');
+  const isInitialLoad = useRef(true);
+  const lastRegionCode = useRef('IN');
+  const lastLanguages = useRef('');
 
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
   const bottomPadding = insets.bottom || 20;
 
-  const loadData = useCallback(async (forceRefresh = false) => {
+  const loadData = useCallback(async (forceRefresh = false, silent = false) => {
     try {
-      setLoading(true);
-      // Load region
       const settings = await loadSettings();
       const region = settings.contentRegion || 'IN';
+      const currentLangs = (settings.preferredLanguages || []).join('|');
+      
+      const shouldShowSkeleton = isInitialLoad.current || lastRegionCode.current !== region || lastLanguages.current !== currentLangs || forceRefresh;
+      
+      if (lastRegionCode.current !== region || lastLanguages.current !== currentLangs || forceRefresh) {
+        setProviderTrendingCache({}); // Clear provider cache on region/lang change
+      }
+      if (shouldShowSkeleton && !silent) {
+        setLoading(true);
+      }
+
       setRegionCode(region);
+      lastRegionCode.current = region;
+      lastLanguages.current = currentLangs;
+      isInitialLoad.current = false;
       setCustomProviders(settings.liveSportsProviders || []);
       setMovieboxSources(settings.movieboxSources || []);
-      const wl = await loadWatchlist();
-      setWatchlist(wl || []);
 
-      const REGION_NAMES = {
-        IN: 'India',
-        US: 'the US',
-        GB: 'the UK',
-        AU: 'Australia',
-        CA: 'Canada'
-      };
+      const REGION_NAMES = { IN: 'India', US: 'the US', GB: 'the UK', AU: 'Australia', CA: 'Canada' };
       setRegionName(REGION_NAMES[region] || region);
 
-      // Load trending content
-      const { global, local } = await fetchTrendingContent(region, forceRefresh);
-      setGlobalTrending(global);
-      setLocalTrending(local);
+      // --- Task 0: Regional Providers (Required for UI filtering) ---
+      const tmdbProviders = await fetchRegionalProviders(region);
+      setRegionalProviders(tmdbProviders);
 
-      // Load initial active provider
-      if (!providerTrendingCache[activeProvider.id] || forceRefresh) {
-        const pData = await fetchProviderContent(region, activeProvider.id);
-        setProviderTrendingCache(prev => ({ ...prev, [activeProvider.id]: pData }));
+      // Validate active provider for the new region
+      const currentValid = tmdbProviders.find(tp => tp.provider_id === activeProvider.id);
+      if (!currentValid && tmdbProviders.length > 0) {
+        // Fallback to the first available provider in the region
+        setActiveProvider({ 
+          id: tmdbProviders[0].provider_id, 
+          name: tmdbProviders[0].provider_name,
+          logoUrl: tmdbProviders[0].logo_path ? `https://image.tmdb.org/t/p/w200${tmdbProviders[0].logo_path}` : null
+        });
       }
 
-      let heroSports = [];
-      try {
-        const matches = await fetchLiveSportsData();
-        const preferredLeagues = [
-          'ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'
-        ];
+      // --- Task 1: Watchlist (Silent) ---
+      const watchlistTask = loadWatchlist().then(wl => setWatchlist(wl || []));
 
-        const livePreferredMatches = matches.filter(m => {
-          if (m.status !== 'LIVE' && m.status !== 'soon') return false;
-          const lowerTitle = m.title.toLowerCase();
-          return preferredLeagues.some(league => lowerTitle.includes(league));
-        });
+      // --- Task 2: Trending Content (CRITICAL) ---
+      const trendingTask = fetchTrendingContent(region, forceRefresh).then(({ global, local }) => {
+        setGlobalTrending(global);
+        setLocalTrending(local);
+        return global;
+      });
 
-        heroSports = livePreferredMatches.map(match => {
-          const lowerTitle = match.title.toLowerCase();
-          let backdrop = null;
-
-          // Use high-quality stadium backgrounds based on sport type
-          if (match.backdrop) {
-            backdrop = match.backdrop;
-          } else if (lowerTitle.includes('ipl') || lowerTitle.includes('india') || match.type === 'cricket') {
-            backdrop = 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=600&auto=format&fit=crop';
-          } else if (match.type === 'football' || lowerTitle.includes('league') || lowerTitle.includes('liga') || lowerTitle.includes('serie')) {
-            backdrop = 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=600&auto=format&fit=crop';
-          } else if (match.type === 'f1' || lowerTitle.includes('f1') || lowerTitle.includes('formula')) {
-            backdrop = 'https://images.pexels.com/photos/36920232/pexels-photo-36920232.jpeg?auto=compress&cs=tinysrgb&w=1200';
+      // --- Task 3: Active Provider Content (CRITICAL) ---
+      const providerTask = (async () => {
+        setLoadingProvider(true);
+        try {
+          if (!providerTrendingCache[activeProvider.id] || forceRefresh) {
+            const pData = await fetchProviderContent(region, activeProvider.id);
+            setProviderTrendingCache(prev => ({ ...prev, [activeProvider.id]: pData }));
           }
+        } finally {
+          setLoadingProvider(false);
+        }
+      })();
 
-          return {
-            id: `sport-${match.id}`,
-            title: match.title,
-            vote_average: 10.0,
-            release_date: new Date().toISOString(),
-            overview: match.status === 'soon' ? `STARTING SOON • Watch ${match.title}` : `LIVE NOW • Watch ${match.title}`,
-            isSports: true,
-            match: match,
-            backdrop_path: backdrop,
-            media_type: 'sport'
-          };
-        });
-      } catch (e) {
-        console.error('Failed to load sports', e);
+      // --- Task 4: Live Sports ---
+      const sportsTask = (async () => {
+        try {
+          const matches = await fetchLiveSportsData();
+          const preferredLeagues = ['ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'];
+          const livePreferredMatches = matches.filter(m => {
+            if (m.status !== 'LIVE' && m.status !== 'soon') return false;
+            const lowerTitle = m.title.toLowerCase();
+            return preferredLeagues.some(league => lowerTitle.includes(league));
+          });
+
+          const heroSports = livePreferredMatches.map(match => {
+            const lowerTitle = match.title.toLowerCase();
+            let backdrop = null;
+            if (match.backdrop) {
+              backdrop = match.backdrop;
+            } else if (lowerTitle.includes('ipl') || lowerTitle.includes('india') || match.type === 'cricket') {
+              backdrop = 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=600&auto=format&fit=crop';
+            } else if (match.type === 'football' || lowerTitle.includes('league') || lowerTitle.includes('liga') || lowerTitle.includes('serie')) {
+              backdrop = 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=600&auto=format&fit=crop';
+            } else if (match.type === 'f1' || lowerTitle.includes('f1') || lowerTitle.includes('formula')) {
+              backdrop = 'https://images.pexels.com/photos/36920232/pexels-photo-36920232.jpeg?auto=compress&cs=tinysrgb&w=1200';
+            }
+            return {
+              id: `sport-${match.id}`,
+              title: match.title,
+              vote_average: 10.0,
+              release_date: new Date().toISOString(),
+              overview: match.status === 'soon' ? `STARTING SOON • Watch ${match.title}` : `LIVE NOW • Watch ${match.title}`,
+              isSports: true,
+              match: match,
+              backdrop_path: backdrop,
+              media_type: 'sport'
+            };
+          });
+
+          return heroSports;
+        } catch (e) {
+          console.error('[Home] Sports load failed:', e);
+          return [];
+        }
+      })();
+
+      // --- Task 5: Continue Watching (Silent) ---
+      const cwTask = loadContinueWatching().then(cwItems => setContinueWatching(cwItems));
+
+      // WAIT FOR ALL CRITICAL DATA before hiding global skeleton
+      const [heroSports, globalResults] = await Promise.all([
+        sportsTask,
+        trendingTask,
+        providerTask // Just wait for it to finish, result is in cache
+      ]);
+
+      setHeroItems([...heroSports, ...globalResults.slice(0, 8)]);
+      setLoading(false);
+
+      // If it's a pull-to-refresh, wait for all tasks to finish completely
+      if (forceRefresh) {
+        await Promise.allSettled([watchlistTask, trendingTask, providerTask, sportsTask, cwTask]);
       }
-
-      setHeroItems([...heroSports, ...global.slice(0, 8)]);
-
-      // Load continue watching
-      const cwItems = await loadContinueWatching();
-      setContinueWatching(cwItems);
     } catch (error) {
       if (error.message === 'INVALID_API_KEY') {
-        // Force the app back to the lock screen and clear the invalid key
         invalidateKey();
       } else {
         console.error('Failed to load home data', error);
       }
     } finally {
-      setLoading(false);
       setRefreshing(false);
     }
-  }, [invalidateKey]); // Stable dependency
+  }, [invalidateKey, providerTrendingCache, activeProvider.id, regionCode]);
 
   useFocusEffect(
     useCallback(() => {
@@ -347,10 +446,34 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [loadData, hasKey]);
 
-  // Refresh all data (including domain settings) when screen is focused
+  // --- Background Cloud Sync ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(async (user) => {
+      if (user) {
+        console.log('[Home] User identified — triggering background sync...');
+        await syncWithCloud(user.uid);
+        // Silently reload local state after sync to reflect cloud changes
+        const wl = await loadWatchlist();
+        setWatchlist(wl);
+        const st = await loadSettings();
+        // Update local component state if needed (e.g. region changed in cloud)
+        if (st.contentRegion !== regionCode) {
+          loadData(false, true); // Force fresh load if region sync changed
+        }
+      }
+    });
+    return unsubscribe;
+  }, [regionCode, loadData]);
+
+  // Refresh data when screen is focused (Silent unless region changed)
   useEffect(() => {
     const unsubscribe = navigation.addListener('focus', () => {
-      loadData();
+      // Trigger a light sync on focus if user exists
+      const user = getCurrentUser();
+      if (user) syncWithCloud(user.uid).then(() => loadWatchlist().then(setWatchlist));
+
+      // Use silent refresh to avoid flickering for the user
+      loadData(false, true);
     });
     return unsubscribe;
   }, [navigation, loadData]);
@@ -360,29 +483,7 @@ const HomeScreen = ({ navigation }) => {
     loadData(true); // FORCE REFRESH
   }, [loadData]);
 
-  const getCustomProviderAppearance = (name, url) => {
-    const searchSource = (name + url).toLowerCase();
-    let icon = 'movie-open-play'; // Premium default
-    
-    if (searchSource.includes('cric')) icon = 'trophy';
-    else if (searchSource.includes('foot') || searchSource.includes('soccer')) icon = 'football';
-    else if (searchSource.includes('f1') || searchSource.includes('race')) icon = 'speedometer';
-    else if (searchSource.includes('sport')) icon = 'ribbon';
-    else if (searchSource.includes('tv') || searchSource.includes('live')) icon = 'television-play';
-    else if (searchSource.includes('flix') || searchSource.includes('cine')) icon = 'video-box';
-    else if (searchSource.includes('box')) icon = 'play-box-multiple';
-    else if (searchSource.includes('stream') || searchSource.includes('watch')) icon = 'play-circle';
-    else {
-      // Deterministic choice based on name length for variety
-      const icons = ['movie-open-play', 'video-box', 'play-box-multiple', 'movie-filter'];
-      icon = icons[name.length % icons.length];
-    }
 
-    const colors = ['#E21D48', '#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#14b8a6', '#6366f1'];
-    let hash = 0;
-    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    return { icon, color: colors[Math.abs(hash) % colors.length] };
-  };
 
   const PROVIDER_CONFIG = {
     'IPL Live': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: 'star', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
@@ -483,13 +584,12 @@ const HomeScreen = ({ navigation }) => {
         });
 
       // Always Add YouTube as Primary Hub
-      const ytEntry = OTT_PROVIDER_MAP['youtube'] || {};
       streamingProviders.push({
         id: 'youtube',
         name: 'YouTube',
         icon: 'youtube',
         color: '#FF0000',
-        logoUrl: ytEntry.logoUrl || null,
+        logoUrl: null, // Force use of native icon for brand consistency and reliability
         searchUrl: 'https://www.youtube.com/results?search_query=',
         appScheme: 'youtube://',
       });
@@ -547,18 +647,25 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  const handleProviderSelect = async (provider) => {
+  const handleProviderSelect = async (p) => {
+    const provider = {
+      id: p.provider_id,
+      name: p.provider_name,
+      logoUrl: p.logo_path ? `https://image.tmdb.org/t/p/w200${p.logo_path}` : null
+    };
     setActiveProvider(provider);
     setShowProviderDropdown(false);
+    setProviderSearch(''); // Reset search on select
     
     // Check cache
     if (!providerTrendingCache[provider.id]) {
       setLoadingProvider(true);
-      const settings = await loadSettings();
-      const region = settings.contentRegion || 'IN';
-      const data = await fetchProviderContent(region, provider.id);
-      setProviderTrendingCache(prev => ({ ...prev, [provider.id]: data }));
-      setLoadingProvider(false);
+      try {
+        const pData = await fetchProviderContent(regionCode, provider.id);
+        setProviderTrendingCache(prev => ({ ...prev, [provider.id]: pData }));
+      } finally {
+        setLoadingProvider(false);
+      }
     }
   };
 
@@ -576,11 +683,7 @@ const HomeScreen = ({ navigation }) => {
     return items.filter(item => !item.isSports);
   };
 
-  const MEDIA_TYPES = [
-    { id: 'all', name: 'All', icon: 'flash' },
-    { id: 'live', name: 'Live', icon: 'radio' },
-    { id: 'movies_series', name: 'Movies & TV', icon: 'film' },
-  ];
+
 
   if (!hasKey) {
     return (
@@ -731,31 +834,54 @@ const HomeScreen = ({ navigation }) => {
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>Select Provider</Text>
             </View>
-            <View style={{ marginTop: 10 }}>
-              {OTT_PROVIDERS.filter(p => !p.regions || (p.regions.includes('global') && !p.regions.includes(`!${regionCode}`)) || p.regions.includes(regionCode)).map(p => {
-                const isActive = activeProvider.id === p.id;
+
+            <View style={styles.modalSearchContainer}>
+              <Ionicons name="search" size={18} color="rgba(255,255,255,0.3)" style={{ marginLeft: 12 }} />
+              <TextInput
+                style={styles.modalSearchInput}
+                placeholder="Search platforms..."
+                placeholderTextColor="rgba(255,255,255,0.3)"
+                value={providerSearch}
+                onChangeText={setProviderSearch}
+                autoCorrect={false}
+              />
+              {providerSearch.length > 0 && (
+                <TouchableOpacity onPress={() => setProviderSearch('')} style={{ padding: 8 }}>
+                  <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            <ScrollView style={{ marginTop: 10, maxHeight: 380 }} showsVerticalScrollIndicator={false}>
+              {regionalProviders
+                .filter(p => p.provider_name.toLowerCase().includes(providerSearch.toLowerCase()))
+                .map(p => {
+                const isActive = activeProvider.id === p.provider_id;
+                const logoUrl = p.logo_path ? `https://image.tmdb.org/t/p/w200${p.logo_path}` : null;
+                const initials = p.provider_name.substring(0, 2).toUpperCase();
+
                 return (
                   <TouchableOpacity
-                    key={p.id}
+                    key={p.provider_id}
                     style={[styles.providerDropdownItem, isActive && styles.providerDropdownItemActive]}
                     onPress={() => handleProviderSelect(p)}>
-                    <View style={[styles.providerDropdownCircle, { backgroundColor: p.logoUrl ? 'transparent' : p.color, overflow: 'hidden' }]}>
-                      {p.logoUrl ? (
+                    <View style={[styles.providerDropdownCircle, { backgroundColor: logoUrl ? 'transparent' : Colors.accentPurple, overflow: 'hidden' }]}>
+                      {logoUrl ? (
                         <Image
-                          source={{ uri: p.logoUrl }}
+                          source={{ uri: logoUrl }}
                           style={{ width: 36, height: 36, borderRadius: 18 }}
                           resizeMode="cover"
                         />
                       ) : (
-                        <Text style={styles.providerDropdownInitials}>{p.shortName}</Text>
+                        <Text style={styles.providerDropdownInitials}>{initials}</Text>
                       )}
                     </View>
-                    <Text style={[styles.providerDropdownName, isActive && { color: '#fff', fontWeight: '800' }]}>{p.name}</Text>
+                    <Text style={[styles.providerDropdownName, isActive && { color: '#fff', fontWeight: '800' }]}>{p.provider_name}</Text>
                     {isActive && <Ionicons name="checkmark-circle" size={20} color={Colors.accentPurple} style={{ marginLeft: 'auto' }} />}
                   </TouchableOpacity>
                 );
               })}
-            </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -886,6 +1012,27 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: Colors.bgPrimary,
   },
+  skeletonHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 20,
+  },
+  skeletonLogo: {
+    width: 140,
+    height: 24,
+    borderRadius: 6,
+  },
+  skeletonIcons: {
+    flexDirection: 'row',
+    gap: 15,
+  },
+  skeletonCircle: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+  },
   skeletonCategoryRow: {
     flexDirection: 'row',
     paddingHorizontal: 20,
@@ -900,26 +1047,43 @@ const styles = StyleSheet.create({
   skeletonHeroContainer: {
     marginBottom: 40,
     alignItems: 'center',
+    width: '100%',
   },
   skeletonHero: {
-    width: '90%',
-    height: 520,
+    width: '92%',
+    aspectRatio: 0.72,
     borderRadius: 30,
     marginBottom: 20,
   },
   skeletonHeroMeta: {
-    width: '90%',
-    gap: 8,
+    width: '92%',
+    gap: 12,
+    paddingHorizontal: 10,
+  },
+  skeletonHeroRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  skeletonBadge: {
+    width: 100,
+    height: 18,
+    borderRadius: 4,
+  },
+  skeletonHeroPlay: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
   },
   skeletonTextLineLong: {
-    width: '70%',
-    height: 18,
-    borderRadius: 9,
+    width: '80%',
+    height: 28,
+    borderRadius: 6,
   },
   skeletonTextLineShort: {
-    width: '40%',
+    width: '50%',
     height: 18,
-    borderRadius: 9,
+    borderRadius: 4,
   },
   skeletonRowContainer: {
     marginBottom: 40,
@@ -1372,6 +1536,24 @@ const styles = StyleSheet.create({
     color: Colors.textSecondary,
     fontSize: 16,
     fontWeight: '600',
+  },
+  modalSearchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    marginHorizontal: 4,
+    marginBottom: 12,
+    height: 46,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+  },
+  modalSearchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '600',
+    paddingHorizontal: 12,
   },
 });
 
