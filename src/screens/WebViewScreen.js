@@ -19,10 +19,8 @@ import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {useFocusEffect} from '@react-navigation/native';
 import { useWindowDimensions } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { useKeepAwake } from 'expo-keep-awake';
 
 const WebViewScreen = ({navigation, route}) => {
-  useKeepAwake();
   const {url, title, appId, color, isAdventure, cards, initialIndex, onUpdateIndex, type} = route.params;
   
   // 1. All hooks at the top
@@ -226,92 +224,57 @@ const WebViewScreen = ({navigation, route}) => {
         mediaPlaybackRequiresUserAction={false}
         mixedContentMode="always"
         allowsFullscreenVideo={true}
-        androidLayerType="hardware"
-        javaScriptCanOpenWindowsAutomatically={false}
+        javaScriptCanOpenWindowsAutomatically={true}
         incognito={false}
         cacheEnabled={true}
+        databaseEnabled={true}
+        domStorageEnabled={true}
+        androidLayerType="hardware"
+        thirdPartyCookiesEnabled={true}
+        userAgent="Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Mobile Safari/537.36"
         injectedJavaScript={`
           (function() {
-            // 1. Performance & Stability Neutralization
             window.alert = function() { return true; };
-            window.confirm = function() { return true; };
-            window.prompt = function() { return null; };
-            window.open = function() { return null; };
-
-            // Block memory-hungry analytics and ads that cause lag
-            const blockList = ['analytics', 'telemetry', 'adsense', 'doubleclick', 'track'];
-            const originalAppend = document.head.appendChild;
-            document.head.appendChild = function(el) {
-              if (el.tagName === 'SCRIPT' && el.src) {
-                if (blockList.some(term => el.src.toLowerCase().includes(term))) return el;
+            
+            // 1. Virtual Wake Lock (Keep Screen Awake)
+            async function requestWakeLock() {
+              try {
+                if ('wakeLock' in navigator) {
+                  const lock = await navigator.wakeLock.request('screen');
+                  console.log('[WakeLock] Active');
+                }
+              } catch (err) {
+                console.log('[WakeLock] Failed:', err);
               }
-              return originalAppend.apply(this, arguments);
-            };
+            }
+            requestWakeLock();
+            document.addEventListener('visibilitychange', () => {
+              if (document.visibilityState === 'visible') requestWakeLock();
+            });
 
-            function applyStyles() {
-              var isPiPMode = window.innerWidth < 300 || window.innerHeight < 300;
-              
-              var videos = document.querySelectorAll('video');
-              videos.forEach(function(v) {
-                // Optimization: Ensure videos are hardware-ready
-                v.setAttribute('webkit-playsinline', 'true');
-                v.setAttribute('playsinline', 'true');
-                
-                if (isPiPMode) {
-                  v.style.setProperty('width', '100vw', 'important');
-                  v.style.setProperty('height', '100vh', 'important');
-                  v.style.setProperty('object-fit', 'contain', 'important');
-                  v.style.setProperty('position', 'fixed', 'important');
-                  v.style.setProperty('top', '0', 'important');
-                  v.style.setProperty('left', '0', 'important');
-                  v.style.setProperty('z-index', '2147483647', 'important');
-                  v.style.setProperty('background', 'black', 'important');
-                }
-                if (v.paused && isPiPMode) v.play().catch(function() {});
-              });
-
-              // Aggressively remove resource-hogging overlays
-              var blockers = document.querySelectorAll('[class*="overlay"], [class*="modal"], [class*="popup"], div[style*="position: fixed"]');
-              blockers.forEach(function(el) {
-                if (el.tagName !== 'VIDEO' && el.id !== 'video-player') {
-                  var text = (el.innerText || el.textContent || "").toLowerCase();
-                  if (text.includes('robot') || text.includes('allow') || text.includes('continue')) {
-                    el.remove();
+            // 2. Auto-Clicker for stubborn Play buttons
+            function triggerPlay() {
+              const playSelectors = ['button[class*="play"]', '.vjs-big-play-button', '.jw-display-icon-container', '#video-player', 'video'];
+              playSelectors.forEach(selector => {
+                const els = document.querySelectorAll(selector);
+                els.forEach(el => {
+                  if (el.offsetParent !== null) { // only if visible
+                    try { el.click(); } catch(e) {}
                   }
-                }
+                });
               });
             }
-
-            applyStyles();
-            var observer = new MutationObserver(applyStyles);
-            observer.observe(document.body, { childList: true, subtree: true });
-            setInterval(applyStyles, 1000); 
-            window.onbeforeunload = null;
+            
+            setInterval(triggerPlay, 2500);
+            setTimeout(triggerPlay, 1000);
           })();
           true;
         `}
         startInLoadingState={true}
         setSupportMultipleWindows={false}
         onShouldStartLoadWithRequest={(request) => {
-          // 1. Block non-http protocols (deep links to apps we don't want)
-          if (!request.url.startsWith('http')) return false;
-
-          // 2. Strict Domain Enforcement
-          const initialHost = new URL(url).hostname.replace('www.', '');
-          const requestHost = new URL(request.url).hostname.replace('www.', '');
-
-          // If it's a main-frame navigation and the domain is different, it's likely a redirect/popup
-          if (request.isTopFrame && !requestHost.includes(initialHost)) {
-            // Allow common trusted player domains if they are redirects
-            const trusted = ['vidsrc', 'vidplay', '2embed', 'filemoon', 'vizcloud', 'rabbitstream'];
-            const isTrusted = trusted.some(t => requestHost.includes(t));
-            
-            if (!isTrusted) {
-              console.log(`[WebView] Blocked unauthorized redirect to: ${requestHost}`);
-              return false;
-            }
-          }
-
+          // Block non-http protocols (deep links to apps we don't want)
+          if (!request.url || !request.url.startsWith('http')) return false;
           return true;
         }}
         renderError={(errorName, errorCode, errorDesc) => (
