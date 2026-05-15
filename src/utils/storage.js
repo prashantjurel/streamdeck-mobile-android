@@ -6,8 +6,10 @@ const KEYS = {
   CONTINUE_WATCHING: 'continue_watching',
   WATCHLIST: 'my_watchlist',
   TMDB_API_KEY: 'tmdb_api_key',
+  DIRECT_ENGINE_ENABLED: 'direct_engine_enabled',
   TMDB_HOME_CACHE: 'tmdb_home_cache_v6',
   SETTINGS: 'streamdeck_settings',
+  DEFAULT_PROVIDER: 'default_streaming_provider',
 };
 
 const CW_MAX_ITEMS = 15;
@@ -34,29 +36,64 @@ export async function saveContinueWatching(items) {
   }
 }
 
-export async function addContinueWatchingEntry(appId, url, title, progress, thumb) {
+export async function addContinueWatchingEntry(metadata) {
   const items = await loadContinueWatching();
-  const id = `${appId}-${url}`;
+  const { tmdbId, season, episode, title, progress, thumb, appId, url, currentTime, duration } = metadata;
+  const mediaType = metadata.mediaType || metadata.media_type || 'movie';
+
+  // Use tmdbId + season/episode as the primary key for TV shows to track per-episode progress
+  let id;
+  if (tmdbId) {
+    if (mediaType === 'tv' && season !== undefined && episode !== undefined) {
+      id = `tmdb-${tmdbId}-tv-s${season}-e${episode}`;
+    } else {
+      id = `tmdb-${tmdbId}-${mediaType}`;
+    }
+  } else {
+    id = `${appId}-${url}`;
+  }
   const existing = items.findIndex(item => item.id === id);
+
+  // Normalize thumbnail URL
+  let finalThumb = thumb;
+  if (finalThumb && finalThumb.startsWith('/')) {
+    finalThumb = `https://image.tmdb.org/t/p/w500${finalThumb}`;
+  }
 
   const entry = {
     id,
-    appId,
-    url,
+    tmdbId,
+    mediaType,
+    showName: metadata.showName || null,
+    season: season !== undefined ? Number(season) : null,
+    episode: episode !== undefined ? Number(episode) : null,
     title: title || 'Unknown',
     progress: progress || 0,
-    thumb: thumb || null,
+    currentTime: currentTime || 0,
+    duration: duration || 0,
+    thumb: finalThumb || null,
+    appId,
+    url,
     timestamp: Date.now(),
   };
 
   if (existing >= 0) {
+    // Merge existing metadata if we have it
     items[existing] = { ...items[existing], ...entry };
+    // Move to top
+    const item = items.splice(existing, 1)[0];
+    items.unshift(item);
   } else {
     items.unshift(entry);
   }
 
-  await saveContinueWatching(items);
-  return items;
+  // PRUNING: Only keep items that are not finished (less than 95% progress)
+  // And avoid showing items with negligible progress (less than 0.1%)
+  const activeItems = items.filter(item => item.progress > 0.1 && item.progress < 95);
+
+  console.log(`[Storage] CW Items updated: ${activeItems.length} items active`);
+  await saveContinueWatching(activeItems);
+  return activeItems;
 }
 
 // ============================================
@@ -174,6 +211,20 @@ export async function loadSettings() {
       }
     });
 
+    // Alias vidkingEnabled to directEngineEnabled if present for migration
+    if (settings.vidkingEnabled !== undefined && settings.directEngineEnabled === undefined) {
+      settings.directEngineEnabled = settings.vidkingEnabled;
+      delete settings.vidkingEnabled;
+    }
+
+    // Default priority for direct engines
+    if (!settings.directEnginePriority) {
+      settings.directEnginePriority = ['cinesrc', 'vidking'];
+    } else {
+      // PURGE: Remove RiveStream from existing lists to avoid ghost entries
+      settings.directEnginePriority = settings.directEnginePriority.filter(id => id !== 'rivestream');
+    }
+
     return settings;
   } catch (e) {
     return getDefaultSettings();
@@ -191,15 +242,19 @@ export async function saveSettings(settings) {
 export function getDefaultSettings() {
   return {
     movieboxSources: [
-      { name: 'Cineby', url: 'cineby.sc', enabled: true },
-      { name: 'MovieBox', url: 'moviebox.mov', enabled: false }
+      { name: 'Cineby', url: 'cineby.sc', enabled: true }
     ],
     contentRegion: 'IN',
     preferredLanguages: ['hi'], // Default to Hindi for India region
     recentLanguages: ['hi', 'te', 'ta', 'ml', 'kn', 'bn', 'en', 'ko', 'ja'],
+    recentRegions: ['IN', 'US', 'GB', 'AU', 'CA'],
     liveSportsProviders: [
       { name: 'SportsLiveToday', url: 'https://sportslivetoday.com', enabled: true },
+      { name: 'PPV', url: 'www.ppv.to', enabled: false }
     ],
+    directEngineEnabled: true,
+    directEnginePriority: ['vidking', 'cinesrc'],
+    defaultProviderId: null,
   };
 }
 
@@ -221,5 +276,71 @@ export async function saveApiKey(key) {
     await AsyncStorage.setItem(KEYS.TMDB_API_KEY, key);
   } catch (e) {
     console.warn('[Storage] Failed to save API key:', e);
+  }
+}
+
+// ============================================
+// Direct Engine (Unified)
+// ============================================
+export async function isDirectEngineEnabled() {
+  try {
+    const val = await AsyncStorage.getItem(KEYS.DIRECT_ENGINE_ENABLED);
+    return val !== 'false'; // Default to true
+  } catch (e) {
+    return true;
+  }
+}
+
+export async function setDirectEngineEnabled(enabled) {
+  try {
+    await AsyncStorage.setItem(KEYS.DIRECT_ENGINE_ENABLED, enabled ? 'true' : 'false');
+  } catch (e) {
+    console.warn('[Storage] Failed to save Direct Engine state:', e);
+  }
+}
+
+export async function removeContinueWatchingEntry(id) {
+  const items = await loadContinueWatching();
+  const filtered = items.filter(item => item.id !== id);
+  await saveContinueWatching(filtered);
+  
+  // ALSO clear the actual progress data key so it starts from 0 if played again
+  try {
+    console.log(`[Storage] Clearing progress for ID: ${id}`);
+    await AsyncStorage.removeItem(id);
+    
+    // TRACK DELETION for sync: Save the ID and timestamp of the removal
+    const deletedRaw = await AsyncStorage.getItem('streamdeck_deleted_cw');
+    let deletedList = deletedRaw ? JSON.parse(deletedRaw) : [];
+    // Keep only the last 50 deletions to stay lean
+    deletedList = [{ id, timestamp: Date.now() }, ...deletedList.filter(d => d.id !== id)].slice(0, 50);
+    await AsyncStorage.setItem('streamdeck_deleted_cw', JSON.stringify(deletedList));
+  } catch (e) {
+    console.warn('[Storage] Failed to track item deletion:', e);
+  }
+  
+  return filtered;
+}
+
+// ============================================
+// Default Provider Preference
+// ============================================
+export async function loadDefaultProvider() {
+  try {
+    return await AsyncStorage.getItem(KEYS.DEFAULT_PROVIDER);
+  } catch (e) {
+    return null;
+  }
+}
+
+export async function saveDefaultProvider(providerId) {
+  try {
+    if (providerId) {
+      await AsyncStorage.setItem(KEYS.DEFAULT_PROVIDER, providerId);
+    } else {
+      await AsyncStorage.removeItem(KEYS.DEFAULT_PROVIDER);
+    }
+  } catch (e) {
+    console.warn('[Storage] Failed to save default provider:', e);
   }
 }

@@ -13,12 +13,14 @@ import {
   Linking,
   Modal,
   ActivityIndicator,
+  ToastAndroid,
+  Platform,
 } from 'react-native';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
-import {loadWatchlist, toggleWatchlistItem, loadSettings} from '../utils/storage';
+import {loadWatchlist, toggleWatchlistItem, loadSettings, isDirectEngineEnabled} from '../utils/storage';
 import {getImageUrl, fetchWatchProviders} from '../services/tmdb';
 import {OTT_PROVIDER_MAP, navigateToOTT} from '../utils/OTTNavigation';
 import SectionHeader from '../components/SectionHeader';
@@ -35,8 +37,27 @@ const LibraryScreen = ({navigation}) => {
   const [showPicker, setShowPicker] = useState(false);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
+
+  // Sync tab bar visibility with overlays
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: showPicker
+        ? { display: 'none' } 
+        : { 
+            backgroundColor: '#0D0D12', 
+            borderTopWidth: 0, 
+            height: 65, 
+            position: 'absolute', 
+            bottom: 0, 
+            left: 0, 
+            right: 0, 
+            elevation: 8 
+          }
+    });
+  }, [showPicker, navigation]);
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [movieboxSources, setMovieboxSources] = useState([]);
+  const [directEngineEnabled, setDirectEngineEnabled] = useState(true);
   const [loading, setLoading] = useState(true);
 
   // Fallback padding for devices that report 0 insets
@@ -46,14 +67,16 @@ const LibraryScreen = ({navigation}) => {
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const [wlItems, advItemsRaw, settings] = await Promise.all([
+      const [wlItems, advItemsRaw, settings, engineEnabled] = await Promise.all([
         loadWatchlist(),
         AsyncStorage.getItem('streamdeck_mobile_adventure_saved'),
-        loadSettings()
+        loadSettings(),
+        isDirectEngineEnabled()
       ]);
       setWatchlist(wlItems || []);
       setAdventures(advItemsRaw ? JSON.parse(advItemsRaw) : []);
       setMovieboxSources(settings?.movieboxSources || []);
+      setDirectEngineEnabled(engineEnabled);
     } catch (e) {
       console.error('[Library] Load error:', e);
     } finally {
@@ -84,8 +107,50 @@ const LibraryScreen = ({navigation}) => {
   const handlePress = async movie => {
     setSelectedMovie(movie);
     setCheckingAvailability(true);
-    setShowPicker(true);
-    setAvailableProviders([]);
+    
+    // 1. Prepare Initial Providers (Direct Engine + MovieBox + YouTube)
+    const initialProviders = [];
+    if (directEngineEnabled) {
+      initialProviders.push({
+        id: 'direct',
+        name: 'StreamDeck Engine',
+        icon: 'movie-open-play',
+        color: Colors.accentPurple,
+        logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
+        searchUrl: null,
+      });
+    }
+
+    // Add MovieBox Sources
+    (movieboxSources || []).filter(s => s.enabled).forEach((s, idx) => {
+      const mbDomain = s.url.trim();
+      const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+      initialProviders.push({
+        id: `moviebox_${idx}`,
+        name: s.name || mbSearchDomain,
+        icon: 'movie-open-play',
+        color: '#8b5cf6',
+        logoUrl: null,
+        searchUrl: `https://${mbSearchDomain}/search?q=`,
+        customDomain: mbDomain,
+      });
+    });
+
+    initialProviders.push({
+      id: 'youtube',
+      name: 'YouTube',
+      icon: 'youtube',
+      color: '#FF0000',
+      logoUrl: null,
+      searchUrl: 'https://www.youtube.com/results?search_query=',
+    });
+
+    setAvailableProviders(initialProviders);
+    
+    // 2. Open Modal with a slight delay for stability
+    setTimeout(() => {
+      setShowPicker(true);
+    }, 50);
 
     try {
       const mediaType = movie.media_type || (movie.title ? 'movie' : 'tv');
@@ -131,6 +196,18 @@ const LibraryScreen = ({navigation}) => {
         found.push({ id: 'youtube', name: 'YouTube', color: '#FF0000', icon: 'Y', logoUrl: 'https://image.tmdb.org/t/p/w200/oIkQkEkwfmcG7IGpRR1NB8frZZM.jpg', searchUrl: 'https://www.youtube.com/results?search_query=' });
       }
 
+      // Add StreamDeck Direct Engine as the first option
+      if (directEngineEnabled) {
+        found.unshift({
+          id: 'direct',
+          name: 'StreamDeck Engine',
+          icon: 'movie-open-play',
+          color: Colors.accentPurple,
+          logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
+          searchUrl: null,
+        });
+      }
+
       setAvailableProviders(found);
     } catch (e) {
       console.error('[Library] Availability check failed:', e);
@@ -146,7 +223,7 @@ const LibraryScreen = ({navigation}) => {
 
     setShowPicker(false);
 
-    await navigateToOTT(
+    const result = await navigateToOTT(
       provider,
       title,
       tmdbId,
@@ -154,6 +231,11 @@ const LibraryScreen = ({navigation}) => {
       provider.customDomain, // Use specific domain from provider object
       navigation
     );
+
+    // Handle unavailable from Direct Engine
+    if (result && result.status === 'unavailable') {
+      setShowPicker(true); // Re-open modal for user to pick another source
+    }
   };
 
   const handleAdventurePress = async adv => {
@@ -240,9 +322,11 @@ const LibraryScreen = ({navigation}) => {
   };
 
   return (
-    <View style={[styles.screen, {paddingBottom: insets.bottom || 80}]}>
+    <View style={[styles.screen, { paddingTop: topPadding }]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
 
+      {/* Overlay moved to bottom */}
+      
       <View style={[styles.header, {paddingTop: topPadding + Spacing.md}]}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
@@ -281,65 +365,63 @@ const LibraryScreen = ({navigation}) => {
               </View>
             </View>
           )}
-          <View style={{height: 120}} />
+          <View style={styles.bottomPadding} />
         </ScrollView>
       )}
 
-      {/* Smart Provider Selection Modal */}
+      {/* Smart Provider Selection Overlay */}
       <Modal
         visible={showPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowPicker(false)}>
-        <View style={styles.modalOverlay}>
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPicker(false)}
+      >
+        <View style={styles.customOverlay}>
           <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>Available On</Text>
-              <Text style={styles.modalSubtitle}>Streaming now in India</Text>
+              <Text style={styles.modalSubtitle}>Select where to stream {selectedMovie?.title || selectedMovie?.name}</Text>
             </View>
 
             <View style={styles.providerGrid}>
-              {!checkingAvailability && availableProviders.map(provider => (
-                <TouchableOpacity
-                  key={provider.id}
-                  style={styles.providerItem}
-                  onPress={() => handleSelectProvider(provider)}
-                  activeOpacity={0.7}
-                >
-                  <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
-                    {provider.logoUrl ? (
-                      <Image
-                        source={{ uri: provider.logoUrl }}
-                        style={styles.providerLogo}
-                        resizeMode="contain"
-                      />
-                    ) : (
-                      <Text style={styles.providerIconText}>{provider.icon}</Text>
-                    )}
-                  </View>
-                  <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                </TouchableOpacity>
-              ))}
-              {!checkingAvailability && availableProviders.length === 1 && availableProviders[0].id === 'youtube' && (
-                <View style={styles.noProvidersBox}>
-                  <Text style={styles.noProvidersText}>Not currently on subscription platforms. Showing YouTube and MovieBox as fallbacks.</Text>
+              {checkingAvailability ? (
+                <View style={styles.modalLoading}>
+                  <ActivityIndicator size="small" color={Colors.accentPurple} />
+                  <Text style={styles.modalLoadingText}>Curating streams...</Text>
                 </View>
+              ) : (
+                availableProviders.map(provider => (
+                  <TouchableOpacity
+                    key={provider.id}
+                    style={styles.providerItem}
+                    onPress={() => handleSelectProvider(provider)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? 'rgba(255,255,255,0.05)' : provider.color }]}>
+                      {provider.logoUrl ? (
+                        <Image
+                          source={{ uri: provider.logoUrl }}
+                          style={styles.providerLogo}
+                          resizeMode="contain"
+                        />
+                      ) : (
+                        <Text style={styles.providerIconText}>{provider.icon}</Text>
+                      )}
+                    </View>
+                    <Text style={styles.providerName} numberOfLines={2}>{provider.name}</Text>
+                  </TouchableOpacity>
+                ))
               )}
             </View>
 
-            {checkingAvailability ? (
-              <ActivityIndicator size="large" color={Colors.accentPink} style={styles.modalSpinner} />
-            ) : (
-              <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowPicker(false)}>
-                <Text style={styles.modalCancelText}>Cancel</Text>
-              </TouchableOpacity>
-            )}
+            <TouchableOpacity style={styles.modalCancelBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
+              <Text style={styles.modalCancelText}>Cancel</Text>
+            </TouchableOpacity>
           </View>
         </View>
       </Modal>
-
     </View>
   );
 };
@@ -348,6 +430,17 @@ const styles = StyleSheet.create({
   screen: {
     flex: 1,
     backgroundColor: Colors.bgPrimary,
+  },
+  customOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'transparent',
+    justifyContent: 'flex-end',
+    zIndex: 100000,
+    elevation: 1000,
   },
   header: {
     flexDirection: 'row',
@@ -509,7 +602,7 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.85)',
+    backgroundColor: 'transparent',
     justifyContent: 'flex-end',
   },
   modalDismissZone: {

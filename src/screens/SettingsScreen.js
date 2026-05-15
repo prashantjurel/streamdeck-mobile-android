@@ -20,13 +20,17 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import { Colors, FontSizes, Spacing, BorderRadius } from '../theme/colors';
-import CustomAlert from '../components/CustomAlert';
+
 import {
   loadSettings,
   saveSettings,
   getDefaultSettings,
   getApiKey,
   saveApiKey as storageSaveApiKey,
+  isDirectEngineEnabled,
+  setDirectEngineEnabled,
+  loadDefaultProvider,
+  saveDefaultProvider,
 } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
 import { useApi } from '../context/ApiContext';
@@ -79,48 +83,25 @@ const SettingsScreen = ({ navigation }) => {
   const [sourceStatuses, setSourceStatuses] = useState({});
   const [editingId, setEditingId] = useState(null); // Keep only for basic ref 
   const [showSaved, setShowSaved] = useState(false);
-  const [alertConfig, setAlertConfig] = useState({ 
-    visible: false, 
-    title: '', 
-    message: '', 
-    onConfirm: () => setAlertConfig(prev => ({ ...prev, visible: false })),
-    confirmText: 'OK',
-    onCancel: null,
-    cancelText: null,
-    type: 'warning'
-  });
+
   const [user, setUser] = useState(null);
   const [syncing, setSyncing] = useState(false);
+  const [directEngineActive, setDirectEngineActive] = useState(true);
 
-  const showAlert = (title, message, onConfirm = null, confirmText = 'OK', onCancel = null, cancelText = null, type = 'warning') => {
-    setAlertConfig({
-      visible: true,
-      title,
-      message,
-      onConfirm: () => {
-        if (onConfirm) onConfirm();
-        setAlertConfig(prev => ({ ...prev, visible: false }));
-      },
-      confirmText,
-      onCancel: onCancel ? () => {
-        onCancel();
-        setAlertConfig(prev => ({ ...prev, visible: false }));
-      } : null,
-      cancelText,
-      type
-    });
-  };
+
   const [showApiKey, setShowApiKey] = useState(false);
 
   // Auto-scroll and flash refs
   const scrollRef = React.useRef(null);
   const movieboxY = React.useRef(0);
   const sportsY = React.useRef(0);
+  const discoveryY = React.useRef(0);
   const flashOpacity = useSharedValue(0);
+  const activeSection = useSharedValue('');
 
-  const flashStyle = useAnimatedStyle(() => ({
+  const createFlashStyle = (section) => useAnimatedStyle(() => ({
     backgroundColor: Colors.accentPurple,
-    opacity: flashOpacity.value * 0.15,
+    opacity: activeSection.value === section ? flashOpacity.value * 0.15 : 0,
     position: 'absolute',
     top: 0,
     left: 0,
@@ -130,6 +111,10 @@ const SettingsScreen = ({ navigation }) => {
     zIndex: -1,
   }));
 
+  const discoveryFlashStyle = createFlashStyle('discovery');
+  const streamingFlashStyle = createFlashStyle('streaming');
+  const sportsFlashStyle = createFlashStyle('sports');
+
   const { saveKey, checkKey } = useApi();
 
   const [expandedSections, setExpandedSections] = useState({
@@ -137,8 +122,11 @@ const SettingsScreen = ({ navigation }) => {
     personal: true,
     tmdb: false,
     region: false,
+    directEngine: false,
     streaming: false,
     sports: false,
+    playback: false,
+    debrid: false,
     data: false
   });
 
@@ -155,8 +143,30 @@ const SettingsScreen = ({ navigation }) => {
   const toggleSection = (key) => {
     setExpandedSections(prev => ({
       ...prev,
-      [key]: !prev[key]
+      [key]: !prev[key],
+      // Close other sections for better focus if it's a major one
+      ...(key === 'playback' ? { playback: !prev.playback } : {})
     }));
+  };
+
+  const [defaultProviderName, setDefaultProviderName] = useState('Not Set');
+
+  const updateDefaultProviderName = async () => {
+    const id = await loadDefaultProvider();
+    if (!id) {
+      setDefaultProviderName('Not Set');
+      return;
+    }
+    
+    // Map IDs to friendly names
+    if (id === 'direct') setDefaultProviderName('StreamDeck Engine');
+    else if (id === 'youtube') setDefaultProviderName('YouTube');
+    else {
+      // Try to find in settings sources
+      const sources = [...(settings.movieboxSources || []), ...(settings.liveSportsProviders || [])];
+      const source = sources.find((s, idx) => `moviebox_${idx}` === id || `custom_${idx}` === id);
+      setDefaultProviderName(source ? source.name : 'Custom Provider');
+    }
   };
 
   // Fallback padding for devices that report 0 insets
@@ -179,7 +189,13 @@ const SettingsScreen = ({ navigation }) => {
           } else if (section === 'sports') {
             setExpandedSections(prev => ({ ...prev, sports: true }));
             scrollRef.current?.scrollTo({ y: sportsY.current - 100, animated: true });
+          } else if (section === 'discovery') {
+            setExpandedSections(prev => ({ ...prev, discovery: true }));
+            scrollRef.current?.scrollTo({ y: discoveryY.current - 100, animated: true });
           }
+
+          // Set active section for flash
+          activeSection.value = section === 'moviebox' ? 'streaming' : section;
 
           // Flash for 3 seconds
           flashOpacity.value = withRepeat(
@@ -191,6 +207,7 @@ const SettingsScreen = ({ navigation }) => {
             true,
             () => {
               flashOpacity.value = 0;
+              activeSection.value = '';
             }
           );
 
@@ -269,6 +286,20 @@ const SettingsScreen = ({ navigation }) => {
     setLangSearch('');
   };
 
+  const handleRegionSelect = (regionCode) => {
+    setSettings(prev => {
+      const recent = prev.recentRegions || [];
+      const updatedRecent = [regionCode, ...recent.filter(c => c !== regionCode)].slice(0, 10);
+      return { 
+        ...prev, 
+        contentRegion: regionCode,
+        recentRegions: updatedRecent
+      };
+    });
+    setShowRegionModal(false);
+    setRegionSearch('');
+  };
+
   const currentLangName = settings.preferredLanguages?.length > 0 
     ? (tmdbLanguages.find(l => l.iso_639_1 === settings.preferredLanguages[0])?.english_name || 'Selected')
     : 'All Languages';
@@ -306,6 +337,7 @@ const SettingsScreen = ({ navigation }) => {
         loadData(); // RE-LOAD after sync
       }
     });
+    updateDefaultProviderName();
     return unsubscribe;
   }, []);
 
@@ -346,6 +378,8 @@ const SettingsScreen = ({ navigation }) => {
     setSettings(s);
     const key = await getApiKey();
     setApiKeyState(key || '');
+    const directEnabled = await isDirectEngineEnabled();
+    setDirectEngineActive(directEnabled);
     
     // Initial ping for enabled sources
     [...(s.movieboxSources || []), ...(s.liveSportsProviders || [])]
@@ -363,11 +397,20 @@ const SettingsScreen = ({ navigation }) => {
       if (!/^https?:\/\//i.test(testUrl)) {
         testUrl = `https://${testUrl}`;
       }
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-      await fetch(testUrl, { method: 'HEAD', signal: controller.signal });
-      clearTimeout(timeoutId);
-      setSourceStatuses(prev => ({ ...prev, [url]: 'success' }));
+      
+      // Use a standard GET with a short timeout via Promise.race
+      const fetchPromise = fetch(testUrl);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 5000)
+      );
+
+      const res = await Promise.race([fetchPromise, timeoutPromise]);
+      
+      if (res && res.status >= 200) {
+        setSourceStatuses(prev => ({ ...prev, [url]: 'success' }));
+      } else {
+        setSourceStatuses(prev => ({ ...prev, [url]: 'error' }));
+      }
     } catch (e) {
       setSourceStatuses(prev => ({ ...prev, [url]: 'error' }));
     }
@@ -382,7 +425,7 @@ const SettingsScreen = ({ navigation }) => {
     if (!list[index].enabled) {
       const enabledCount = list.filter(s => s.enabled).length;
       if (enabledCount >= 3) {
-        showAlert('Limit Reached', `You can only enable up to 3 ${type === 'moviebox' ? 'streaming sources' : 'sports providers'} at a time. Please disable one first.`, null, 'OK', null, null, 'warning');
+        Alert.alert('Limit Reached', `You can only enable up to 3 ${type === 'moviebox' ? 'streaming sources' : 'sports providers'} at a time. Please disable one first.`);
         return;
       }
     }
@@ -458,10 +501,10 @@ const SettingsScreen = ({ navigation }) => {
                           if (syncing) return;
                           try {
                             await handleManualSync();
-                            showAlert('Sync Complete', 'Your settings and library are now secured in the cloud.', null, 'OK', null, null, 'success');
+                            Alert.alert('Sync Complete', 'Your settings and library are now secured in the cloud.');
                           } catch (e) {
                             setSyncing(false);
-                            showAlert('Sync Failed', 'Could not reach the cloud. Check your connection.', null, 'OK', null, null, 'error');
+                            Alert.alert('Sync Failed', 'Could not reach the cloud. Check your connection.');
                           }
                         }}
                         disabled={syncing}
@@ -496,7 +539,7 @@ const SettingsScreen = ({ navigation }) => {
                         style={[styles.actionBtn, styles.logoutBtn]}
                         onPress={async () => {
                           await signOut();
-                          showAlert('Signed Out', 'Cloud sync is now disabled.', null, 'OK', null, null, 'info');
+                          Alert.alert('Signed Out', 'Cloud sync is now disabled.');
                         }}
                       >
                         <Ionicons name="log-out-outline" size={16} color="#ef4444" />
@@ -521,7 +564,7 @@ const SettingsScreen = ({ navigation }) => {
                       } catch (e) {
                         setSyncing(false);
                         if (e.code !== 'ASYNC_OP_IN_PROGRESS') {
-                          showAlert('Sync Failed', 'Could not connect to Google.', null, 'OK', null, null, 'error');
+                          Alert.alert('Sync Failed', 'Could not connect to Google.');
                         }
                       }
                     }}
@@ -611,7 +654,10 @@ const SettingsScreen = ({ navigation }) => {
         </View>
 
         {/* Discovery Settings (Consolidated) */}
-        <View style={styles.section}>
+        <View 
+          style={styles.section}
+          onLayout={e => discoveryY.current = e.nativeEvent.layout.y}
+        >
           <CollapsibleHeader 
             title="DISCOVERY SETTINGS" 
             sectionKey="discovery" 
@@ -619,6 +665,7 @@ const SettingsScreen = ({ navigation }) => {
             onToggle={toggleSection}
             subtitle={`${currentRegionName} • ${currentLangName}`}
           />
+          <Animated.View style={discoveryFlashStyle} pointerEvents="none" />
           {expandedSections.discovery && (
             <View style={styles.card}>
               <View style={styles.discoveryActionRow}>
@@ -665,6 +712,129 @@ const SettingsScreen = ({ navigation }) => {
         </View>
 
 
+        {/* StreamDeck Direct Engine */}
+        <View style={styles.section}>
+          <CollapsibleHeader 
+            title="STREAMDECK DIRECT ENGINE" 
+            sectionKey="directEngine"
+            isExpanded={expandedSections.directEngine}
+            onToggle={toggleSection}
+            subtitle={directEngineActive ? 'Unified HD Engine Active' : 'Engines Disabled'}
+          />
+          {expandedSections.directEngine && (
+              <View style={styles.engineCard}>
+                <View style={styles.engineHeader}>
+                  <View style={styles.engineInfo}>
+                    <Text style={styles.engineTitle}>StreamDeck Unified Engine</Text>
+                    <Text style={styles.engineDesc}>Intelligently routes across multiple servers to find your content with zero ads and direct playback.</Text>
+                  </View>
+                  <Switch
+                    value={directEngineActive}
+                    onValueChange={async (val) => {
+                      setDirectEngineActive(val);
+                      await setDirectEngineEnabled(val);
+                    }}
+                    trackColor={{ false: '#333', true: 'rgba(139, 92, 246, 0.5)' }}
+                    thumbColor={directEngineActive ? Colors.accentPurple : '#666'}
+                  />
+                </View>
+
+                <View style={styles.engineBadge}>
+                  <Ionicons name="flash" size={12} color="#f59e0b" />
+                  <Text style={styles.engineBadgeText}>ULTRA-FAST HD PIPELINE ACTIVE</Text>
+                </View>
+
+                <View style={styles.enginePriorityList}>
+                  <Text style={styles.prioritySublabel}>Preferred Priority Order:</Text>
+                  {settings.directEnginePriority?.filter(id => id !== 'rivestream').map((id, index) => {
+                    const engineMap = {
+                      'cinesrc': { name: 'CineSrc (Primary Server)', id: 'cinesrc' },
+                      'vidking': { name: 'VidKing (Secondary Server)', id: 'vidking' },
+                    };
+                    const engine = engineMap[id] || { name: id, id };
+                    
+                    return (
+                      <View key={id} style={styles.priorityItem}>
+                        <View style={styles.priorityInfo}>
+                          <View style={styles.priorityIndex}>
+                            <Text style={styles.priorityIndexText}>{index + 1}</Text>
+                          </View>
+                          <Text style={styles.priorityName}>{engine.name}</Text>
+                        </View>
+                        {index > 0 && (
+                          <TouchableOpacity 
+                            style={styles.priorityMoveBtn}
+                            onPress={() => {
+                              const newPriority = [...settings.directEnginePriority];
+                              const temp = newPriority[index];
+                              newPriority[index] = newPriority[index - 1];
+                              newPriority[index - 1] = temp;
+                              setSettings({ ...settings, directEnginePriority: newPriority });
+                            }}
+                          >
+                            <Ionicons name="chevron-up-circle" size={24} color={Colors.accentPurple} />
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    );
+                  })}
+                </View>
+                
+                <Text style={styles.engineNote}>
+                  Priority defines which server is tried first. If content is missing on the preferred server, StreamDeck automatically falls back to others.
+                </Text>
+              </View>
+          )}
+        </View>
+        
+        {/* Playback Preferences */}
+        <View style={styles.section}>
+          <CollapsibleHeader 
+            title="PLAYBACK PREFERENCES" 
+            sectionKey="playback"
+            isExpanded={expandedSections.playback}
+            onToggle={toggleSection}
+            subtitle={defaultProviderName !== 'Not Set' ? `Default: ${defaultProviderName}` : 'No Default Set'}
+          />
+          {expandedSections.playback && (
+            <View style={styles.card}>
+              <Text style={styles.fieldLabel}>Default Streaming Provider</Text>
+              <Text style={styles.fieldHint}>
+                If set, the "Available On" modal will be bypassed, and content will start instantly using your favorite service.
+              </Text>
+              
+              <View style={styles.defaultProviderRow}>
+                <View style={styles.defaultProviderInfo}>
+                  <View style={[styles.statusDot, defaultProviderName !== 'Not Set' ? styles.statusDotSuccess : { backgroundColor: '#666' }]} />
+                  <Text style={styles.currentDefaultText}>
+                    {defaultProviderName !== 'Not Set' ? `Current: ${defaultProviderName}` : 'Standard (Always Ask)'}
+                  </Text>
+                </View>
+                
+                {defaultProviderName !== 'Not Set' && (
+                  <TouchableOpacity 
+                    style={styles.resetDefaultBtn}
+                    onPress={async () => {
+                      await saveDefaultProvider(null);
+                      await updateDefaultProviderName();
+                      Alert.alert('Preference Reset', 'The app will now ask you which provider to use for every playback.');
+                    }}
+                  >
+                    <Text style={styles.resetDefaultBtnText}>Reset to Default</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+
+              <View style={styles.tipBox}>
+                <Ionicons name="bulb-outline" size={16} color="#fbbf24" style={{ marginRight: 8 }} />
+                <Text style={styles.tipText}>
+                  You can set a default anytime from the "Available On" modal by checking the "Always use this" box.
+                </Text>
+              </View>
+            </View>
+          )}
+        </View>
+
         {/* Streaming Sources */}
         <View
           style={styles.section}
@@ -676,6 +846,7 @@ const SettingsScreen = ({ navigation }) => {
             isExpanded={expandedSections.streaming}
             onToggle={toggleSection}
           />
+          <Animated.View style={streamingFlashStyle} pointerEvents="none" />
           {expandedSections.streaming && (
             <View style={styles.card}>
               <Text style={styles.fieldLabel}>MovieBox Sources</Text>
@@ -737,6 +908,7 @@ const SettingsScreen = ({ navigation }) => {
             isExpanded={expandedSections.sports}
             onToggle={toggleSection}
           />
+          <Animated.View style={sportsFlashStyle} pointerEvents="none" />
           {expandedSections.sports && (
             <View style={styles.card}>
               <Text style={styles.fieldLabel}>Sports Providers</Text>
@@ -792,16 +964,7 @@ const SettingsScreen = ({ navigation }) => {
         <View style={{ height: 120 }} />
       </ScrollView>
 
-      <CustomAlert 
-        visible={alertConfig.visible}
-        title={alertConfig.title}
-        message={alertConfig.message}
-        onConfirm={alertConfig.onConfirm}
-        confirmText={alertConfig.confirmText}
-        onCancel={alertConfig.onCancel}
-        cancelText={alertConfig.cancelText}
-        type={alertConfig.type}
-      />
+
 
       {/* Language Picker Modal */}
       <Modal
@@ -816,7 +979,7 @@ const SettingsScreen = ({ navigation }) => {
             activeOpacity={1} 
             onPress={() => setShowLangModal(false)} 
           />
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { paddingBottom: 40 + insets.bottom }]}>
             <View style={styles.modalHeader}>
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>Discovery Language</Text>
@@ -935,7 +1098,7 @@ const SettingsScreen = ({ navigation }) => {
             activeOpacity={1} 
             onPress={() => setShowRegionModal(false)} 
           />
-          <View style={styles.modalContent}>
+          <View style={[styles.modalContent, { paddingBottom: 40 + insets.bottom }]}>
             <View style={styles.modalHeader}>
               <View style={[styles.modalHandle, { backgroundColor: '#4ADE80' }]} />
               <Text style={styles.modalTitle}>Select Region</Text>
@@ -963,18 +1126,41 @@ const SettingsScreen = ({ navigation }) => {
                 <ActivityIndicator color="#4ADE80" style={{ marginTop: 40 }} />
               ) : (
                 <>
-                  <Text style={styles.langSectionTitle}>All Regions</Text>
+                  {/* Recently Used Regions */}
+                  {!regionSearch && (settings.recentRegions || []).length > 0 && (
+                    <View style={{ marginBottom: 24, marginTop: 16 }}>
+                      <Text style={styles.langSectionTitle}>Recently Used</Text>
+                      {(settings.recentRegions || []).map(code => {
+                        const reg = tmdbRegions.find(r => r.iso_3166_1 === code);
+                        if (!reg) return null;
+                        const isActive = settings.contentRegion === code;
+                        return (
+                          <TouchableOpacity 
+                            key={`recent-reg-${code}`}
+                            style={[styles.langItem, isActive && styles.langItemActive]}
+                            onPress={() => handleRegionSelect(code)}
+                          >
+                            <Text style={styles.langItemCode}>{code}</Text>
+                            <Text style={[styles.langItemText, isActive && styles.langItemTextActive]}>
+                              {reg.english_name}
+                            </Text>
+                            {isActive && <Ionicons name="checkmark-circle" size={20} color="#4ADE80" />}
+                          </TouchableOpacity>
+                        );
+                      })}
+                    </View>
+                  )}
+
+                  <Text style={styles.langSectionTitle}>
+                    {regionSearch ? 'Search Results' : 'All Regions'}
+                  </Text>
                   {filteredRegions.map(reg => {
                     const isActive = settings.contentRegion === reg.iso_3166_1;
                     return (
                       <TouchableOpacity 
                         key={reg.iso_3166_1}
                         style={[styles.langItem, isActive && styles.langItemActive]}
-                        onPress={() => {
-                          setSettings(prev => ({ ...prev, contentRegion: reg.iso_3166_1 }));
-                          setShowRegionModal(false);
-                          setRegionSearch('');
-                        }}
+                        onPress={() => handleRegionSelect(reg.iso_3166_1)}
                       >
                         <Text style={styles.langItemCode}>{reg.iso_3166_1}</Text>
                         <Text style={[styles.langItemText, isActive && styles.langItemTextActive]}>
@@ -1860,7 +2046,162 @@ const styles = StyleSheet.create({
     fontSize: 10,
     fontFamily: 'Inter-Medium',
   },
-
+  engineCard: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderRadius: 20,
+    padding: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    marginTop: 8,
+  },
+  enginePriorityList: {
+    marginTop: 15,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  prioritySublabel: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
+    fontWeight: '800',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  priorityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  priorityInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  priorityIndex: {
+    width: 20,
+    height: 20,
+    borderRadius: 10,
+    backgroundColor: 'rgba(139, 92, 246, 0.2)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+  priorityIndexText: {
+    color: Colors.accentPurple,
+    fontSize: 10,
+    fontWeight: '900',
+  },
+  priorityName: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  priorityMoveBtn: {
+    padding: 4,
+  },
+  engineHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 16,
+  },
+  engineInfo: {
+    flex: 1,
+    marginRight: 12,
+  },
+  engineTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '800',
+    marginBottom: 4,
+  },
+  engineDesc: {
+    color: Colors.textMuted,
+    fontSize: 11,
+    fontWeight: '600',
+    lineHeight: 16,
+  },
+  engineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(16, 185, 129, 0.08)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.1)',
+  },
+  engineBadgeText: { fontSize: 10, fontWeight: '900', color: '#f59e0b', marginLeft: 6, letterSpacing: 0.5 },
+  engineStatusList: { marginTop: Spacing.lg, gap: 10 },
+  engineStatusItem: { flexDirection: 'row', alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.03)', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 10 },
+  engineStatusText: { color: Colors.textSecondary, fontSize: 12, fontWeight: '600', marginLeft: 10 },
+  engineNote: { color: Colors.textMuted, fontSize: 11, fontStyle: 'italic', marginTop: Spacing.lg, textAlign: 'center', lineHeight: 16 },
+  engineLinkBtn: { marginTop: Spacing.lg, borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: 'rgba(139, 92, 246, 0.2)' },
+  engineLinkGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+  },
+  engineLinkText: {
+    color: Colors.accentPurple,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  tipBox: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(251, 191, 36, 0.05)',
+    padding: 12,
+    borderRadius: 12,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(251, 191, 36, 0.1)',
+  },
+  tipText: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  defaultProviderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    padding: 14,
+    borderRadius: 12,
+    marginTop: 10,
+  },
+  defaultProviderInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  currentDefaultText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  resetDefaultBtn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  resetDefaultBtnText: {
+    color: '#ef4444',
+    fontSize: 12,
+    fontWeight: '700',
+  },
 });
 
 export default SettingsScreen;

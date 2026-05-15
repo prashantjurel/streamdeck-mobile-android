@@ -30,15 +30,22 @@ import Animated, {
   withSequence,
   Easing,
   interpolate,
-  Extrapolation
+  Extrapolation,
+  withSpring,
+  FadeInDown,
+  FadeOutDown,
 } from 'react-native-reanimated';
 import { Colors, Spacing } from '../theme/colors';
 import HeroSpotlight from '../components/HeroSpotlight';
 import ContinueWatchingRow from '../components/ContinueWatchingRow';
 import TrendingRow from '../components/TrendingRow';
-import { fetchTrendingContent, fetchWatchProviders, getImageUrl, OTT_PROVIDERS, fetchProviderContent, fetchRegionalProviders } from '../services/tmdb';
-import { loadContinueWatching, loadSettings, toggleWatchlistItem, loadWatchlist } from '../utils/storage';
+import { fetchTrendingContent, fetchWatchProviders, getImageUrl, OTT_PROVIDERS, fetchProviderContent, fetchRegionalProviders, fetchTVDetails, fetchTVSeasonDetails } from '../services/tmdb';
 import UpdateModal from '../components/UpdateModal';
+import RegionInfoModal from '../components/RegionInfoModal';
+import SeriesPickerModal from '../components/SeriesPickerModal';
+import MediaProviderModal from '../components/MediaProviderModal';
+import { loadSettings, loadContinueWatching, isDirectEngineEnabled, loadWatchlist, toggleWatchlistItem, loadDefaultProvider, saveDefaultProvider } from '../utils/storage';
+
 import { fetchLiveSportsData } from '../services/sports';
 import { useApi } from '../context/ApiContext';
 import { getCurrentUser, onAuthStateChanged } from '../services/auth';
@@ -276,15 +283,42 @@ const HomeScreen = ({ navigation }) => {
   const [continueWatching, setContinueWatching] = useState([]);
   const [heroItems, setHeroItems] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadingGlobal, setLoadingGlobal] = useState(true);
+  const [loadingLocal, setLoadingLocal] = useState(true);
+  const [loadingSports, setLoadingSports] = useState(true);
+  const [loadingCW, setLoadingCW] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [showPicker, setShowPicker] = useState(false);
   const [isFetchingProviders, setIsFetchingProviders] = useState(false);
   const [showRedirectWarning, setShowRedirectWarning] = useState(false);
+  const [showRegionInfo, setShowRegionInfo] = useState(false);
   const [redirectInfo, setRedirectInfo] = useState(null);
+
+  // --- TV Series Selection State ---
+  const [showSeriesPicker, setShowSeriesPicker] = useState(false);
+
+  // --- TAB BAR SYNC (Keeping bar visible for stability, modals handle their own padding) ---
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: { 
+        display: 'flex',
+        backgroundColor: '#0D0D12', 
+        borderTopWidth: 0, 
+        height: 65, 
+        position: 'absolute', 
+        bottom: 0, 
+        left: 0, 
+        right: 0, 
+        elevation: 0 
+      }
+    });
+  }, [navigation]);
   const [selectedQuickItem, setSelectedQuickItem] = useState(null);
+  const lastSyncTime = useRef(0);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [customProviders, setCustomProviders] = useState([]);
   const [movieboxSources, setMovieboxSources] = useState([]);
+  const [directEngineEnabled, setDirectEngineEnabledState] = useState(true);
   const [selectedMediaType, setSelectedMediaType] = useState('all'); // 'all', 'movie', 'tv'
   const [watchlist, setWatchlist] = useState([]);
   const [regionCode, setRegionCode] = useState('IN');
@@ -297,6 +331,7 @@ const HomeScreen = ({ navigation }) => {
   // Fallback padding for devices that report 0 insets
   const topPadding = insets.top || StatusBar.currentHeight || 0;
   const bottomPadding = insets.bottom || 20;
+  const modalSafePadding = bottomPadding; // Minimal padding for Modal footer
 
   const loadData = useCallback(async (forceRefresh = false, silent = false) => {
     try {
@@ -319,6 +354,7 @@ const HomeScreen = ({ navigation }) => {
       isInitialLoad.current = false;
       setCustomProviders(settings.liveSportsProviders || []);
       setMovieboxSources(settings.movieboxSources || []);
+      setDirectEngineEnabledState(settings.directEngineEnabled !== false); // Default to true
 
       const REGION_NAMES = { IN: 'India', US: 'the US', GB: 'the UK', AU: 'Australia', CA: 'Canada' };
       setRegionName(REGION_NAMES[region] || region);
@@ -327,15 +363,18 @@ const HomeScreen = ({ navigation }) => {
       const tmdbProviders = await fetchRegionalProviders(region);
       setRegionalProviders(tmdbProviders);
 
-      // Validate active provider for the new region
+      // Resolve initial active provider ID
+      let targetProvider = activeProvider; // Fallback to current state
       const currentValid = tmdbProviders.find(tp => tp.provider_id === activeProvider.id);
+      
       if (!currentValid && tmdbProviders.length > 0) {
         // Fallback to the first available provider in the region
-        setActiveProvider({ 
+        targetProvider = { 
           id: tmdbProviders[0].provider_id, 
           name: tmdbProviders[0].provider_name,
           logoUrl: tmdbProviders[0].logo_path ? `https://image.tmdb.org/t/p/w200${tmdbProviders[0].logo_path}` : null
-        });
+        };
+        setActiveProvider(targetProvider);
       }
 
       // --- Task 1: Watchlist (Silent) ---
@@ -344,17 +383,23 @@ const HomeScreen = ({ navigation }) => {
       // --- Task 2: Trending Content (CRITICAL) ---
       const trendingTask = fetchTrendingContent(region, forceRefresh).then(({ global, local }) => {
         setGlobalTrending(global);
+        setLoadingGlobal(false);
         setLocalTrending(local);
-        return global;
+        setLoadingLocal(false);
+        
+        // Update Hero with what we have
+        setHeroItems(prev => [...prev.filter(item => item.isSports), ...global.slice(0, 8)]);
+        setLoading(false); // Can hide global skeleton once first major section is ready
+        return { global, local };
       });
 
       // --- Task 3: Active Provider Content (CRITICAL) ---
       const providerTask = (async () => {
         setLoadingProvider(true);
         try {
-          if (!providerTrendingCache[activeProvider.id] || forceRefresh) {
-            const pData = await fetchProviderContent(region, activeProvider.id);
-            setProviderTrendingCache(prev => ({ ...prev, [activeProvider.id]: pData }));
+          if (!providerTrendingCache[targetProvider.id] || forceRefresh) {
+            const pData = await fetchProviderContent(region, targetProvider.id);
+            setProviderTrendingCache(prev => ({ ...prev, [targetProvider.id]: pData }));
           }
         } finally {
           setLoadingProvider(false);
@@ -363,6 +408,7 @@ const HomeScreen = ({ navigation }) => {
 
       // --- Task 4: Live Sports ---
       const sportsTask = (async () => {
+        setLoadingSports(true);
         try {
           const matches = await fetchLiveSportsData();
           const preferredLeagues = ['ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'];
@@ -397,29 +443,38 @@ const HomeScreen = ({ navigation }) => {
             };
           });
 
+          setHeroItems(prev => [...heroSports, ...prev.filter(item => !item.isSports)]);
+          setLoadingSports(false);
           return heroSports;
         } catch (e) {
           console.error('[Home] Sports load failed:', e);
+          setLoadingSports(false);
           return [];
         }
       })();
 
       // --- Task 5: Continue Watching (Silent) ---
-      const cwTask = loadContinueWatching().then(cwItems => setContinueWatching(cwItems));
+      const cwTask = loadContinueWatching().then(cwItems => {
+        setContinueWatching(cwItems);
+        setLoadingCW(false);
+      });
 
-      // WAIT FOR ALL CRITICAL DATA before hiding global skeleton
-      const [heroSports, globalResults] = await Promise.all([
-        sportsTask,
-        trendingTask,
-        providerTask // Just wait for it to finish, result is in cache
-      ]);
-
-      setHeroItems([...heroSports, ...globalResults.slice(0, 8)]);
-      setLoading(false);
+      // --- Task 6: Direct Engine Status ---
+      const engineTask = isDirectEngineEnabled().then(enabled => setDirectEngineEnabledState(enabled));
 
       // If it's a pull-to-refresh, wait for all tasks to finish completely
       if (forceRefresh) {
-        await Promise.allSettled([watchlistTask, trendingTask, providerTask, sportsTask, cwTask]);
+        // Also trigger a cloud sync on pull-to-refresh to fetch latest from other devices
+        const user = getCurrentUser();
+        const syncTask = user ? syncWithCloud(user.uid) : Promise.resolve();
+        
+        await Promise.allSettled([watchlistTask, trendingTask, providerTask, sportsTask, cwTask, engineTask, syncTask]);
+        
+        // Final state refresh after sync
+        const wl = await loadWatchlist();
+        setWatchlist(wl);
+        const cw = await loadContinueWatching();
+        setContinueWatching(cw);
       }
     } catch (error) {
       if (error.message === 'INVALID_API_KEY') {
@@ -429,6 +484,7 @@ const HomeScreen = ({ navigation }) => {
       }
     } finally {
       setRefreshing(false);
+      setLoading(false); // Ensure skeleton is hidden even on partial failure
     }
   }, [invalidateKey, providerTrendingCache, activeProvider.id, regionCode]);
 
@@ -437,6 +493,11 @@ const HomeScreen = ({ navigation }) => {
       if (!hasKey) {
         requestKey();
       }
+      
+      // Refresh Continue Watching items when screen comes into focus
+      loadContinueWatching().then(items => {
+        setContinueWatching(items);
+      });
     }, [hasKey, requestKey])
   );
 
@@ -446,24 +507,34 @@ const HomeScreen = ({ navigation }) => {
     }
   }, [loadData, hasKey]);
 
-  // --- Background Cloud Sync ---
+  // --- Background Cloud Sync (Optimized) ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(async (user) => {
       if (user) {
-        console.log('[Home] User identified — triggering background sync...');
-        await syncWithCloud(user.uid);
-        // Silently reload local state after sync to reflect cloud changes
-        const wl = await loadWatchlist();
-        setWatchlist(wl);
-        const st = await loadSettings();
-        // Update local component state if needed (e.g. region changed in cloud)
-        if (st.contentRegion !== regionCode) {
-          loadData(false, true); // Force fresh load if region sync changed
+        const now = Date.now();
+        // Only trigger background sync if it hasn't happened in the last 60 seconds
+        // OR if this is the first time the user is identified in this session
+        if (now - lastSyncTime.current > 60000) {
+          console.log('[Home] User identified — triggering background sync...');
+          lastSyncTime.current = now;
+          await syncWithCloud(user.uid);
+          
+          // Update local state silently
+          const wl = await loadWatchlist();
+          setWatchlist(wl);
+          const cw = await loadContinueWatching();
+          setContinueWatching(cw);
+          
+          const st = await loadSettings();
+          if (st.contentRegion && st.contentRegion !== lastRegionCode.current) {
+             console.log('[Sync] Region changed via cloud sync, refreshing...');
+             loadData(false, true); 
+          }
         }
       }
     });
     return unsubscribe;
-  }, [regionCode, loadData]);
+  }, []); // Static subscription
 
   // Refresh data when screen is focused (Silent unless region changed)
   useEffect(() => {
@@ -485,7 +556,7 @@ const HomeScreen = ({ navigation }) => {
 
 
 
-  const PROVIDER_CONFIG = {
+  const SPORTS_PROVIDER_CONFIG = {
     'IPL Live': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: 'star', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
     'Football': [{ id: 'hotstar', name: 'JioHotstar', appScheme: 'hotstar://', url: 'https://www.hotstar.com', color: '#001944', icon: 'star', logoUrl: 'https://image.tmdb.org/t/p/w200/7Fl8ylPDclt3ZYgNbW2t7rbZE9I.jpg' }],
     'F1 Live': [{ id: 'fancode', name: 'FanCode', appScheme: 'fancode://', url: 'https://fancode.com', color: '#FF6B35', icon: 'football', logoUrl: null }],
@@ -498,6 +569,13 @@ const HomeScreen = ({ navigation }) => {
     try {
       const updated = await toggleWatchlistItem(movie);
       setWatchlist(updated);
+      
+      // Sync change to cloud immediately
+      const user = getCurrentUser();
+      if (user) {
+        syncWithCloud(user.uid);
+      }
+
       const isNowInList = updated.some(m => m.id === movie.id);
       const title = movie.title || movie.name || 'Item';
       const msg = isNowInList
@@ -515,13 +593,100 @@ const HomeScreen = ({ navigation }) => {
   };
 
   // ── ▶ Button: Show where to stream ───────────────────
-  const handlePlayPress = async (movie) => {
-    if (movie.isSports) {
-      // Sports: show sports provider picker
-      const qName = movie.match.quickAccessName || (movie.match.type === 'football' ? 'Football' : 'IPL Live');
-      setSelectedQuickItem({ name: movie.match.title || qName });
+  const handlePlayPress = async (movie, forcedEpisode = null) => {
+    if (!movie) return;
+    
+    const title = movie.title || movie.name || 'Movie';
+    // Robust detection: if it has first_air_date or is explicitly 'tv', it's a series
+    const mediaType = movie.media_type === 'tv' || movie.first_air_date ? 'tv' : 'movie';
+    const tmdbId = movie.id;
+    const activeEpisode = forcedEpisode;
 
-      const nativeProviders = PROVIDER_CONFIG[qName] || [];
+    console.log(`[Home] handlePlayPress triggered: ${title} (${mediaType}:${tmdbId}) | Episode: ${activeEpisode?.episode_number || 'none'}`);
+
+    if (mediaType === 'tv' && !forcedEpisode) {
+      setSelectedQuickItem({ id: tmdbId, tmdbId, name: title, mediaType, thumb: movie.poster_path });
+      setShowSeriesPicker(true);
+      return;
+    }
+
+    if (forcedEpisode) {
+      setSelectedQuickItem(movie);
+    }
+
+    // 1. Prepare Provider Categories
+    const engineProviders = [];
+    const movieboxProviders = [];
+    const socialProviders = [];
+
+    // Category: StreamDeck Engine
+    if (directEngineEnabled) {
+      engineProviders.push({
+        id: 'direct',
+        name: 'StreamDeck Engine',
+        icon: 'movie-open-play',
+        color: Colors.accentPurple,
+        logoUrl: 'local_logo',
+        searchUrl: null,
+      });
+    }
+    
+    // Category: MovieBox Sources (Streaming Services)
+    (movieboxSources || [])
+      .filter(s => s.enabled)
+      .forEach((s, idx) => {
+        const mbDomain = s.url.trim();
+        const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+        const appearance = getCustomProviderAppearance(s.name || mbSearchDomain, mbDomain);
+        movieboxProviders.push({
+          id: `moviebox_${idx}`,
+          name: s.name || mbSearchDomain,
+          icon: appearance.icon,
+          color: appearance.color,
+          logoUrl: null,
+          searchUrl: `https://${mbSearchDomain}/search?q=`,
+          appScheme: null,
+          customDomain: mbDomain,
+        });
+      });
+
+    // Category: Social/Generic (YouTube)
+    socialProviders.push({
+      id: 'youtube',
+      name: 'YouTube',
+      icon: 'youtube',
+      color: '#FF0000',
+      logoUrl: null,
+      searchUrl: 'https://www.youtube.com/results?search_query=',
+      appScheme: 'youtube://',
+    });
+
+    // 2. Set initial state (OTT will be empty/fetching)
+    const movieThumb = movie.backdrop_path 
+      ? getImageUrl(movie.backdrop_path) 
+      : (movie.poster_path ? getImageUrl(movie.poster_path) : null);
+    setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movieThumb });
+    setAvailableProviders([...engineProviders, ...movieboxProviders, ...socialProviders]);
+
+    // Check for DEFAULT PROVIDER before showing picker
+    const defaultId = await loadDefaultProvider();
+    if (defaultId) {
+      const allReadyProviders = [...engineProviders, ...movieboxProviders, ...socialProviders];
+      const defaultProvider = allReadyProviders.find(p => p.id === defaultId);
+      
+      if (defaultProvider) {
+        console.log(`[Home] Default provider found: ${defaultId}. Bypassing modal.`);
+        handleSelectProvider(defaultProvider, false, movie); // already saved, no need to save again
+        return;
+      }
+    }
+
+    setShowPicker(true);
+    console.log(`[Home] setShowPicker(true) called. Providers: ${engineProviders.length + movieboxProviders.length + socialProviders.length}`);
+
+    if (movie.isSports) {
+      const qName = movie.match?.quickAccessName || (movie.match?.type === 'football' ? 'Football' : 'IPL Live');
+      const nativeProviders = SPORTS_PROVIDER_CONFIG[qName] || [];
       const formattedCustomProviders = customProviders.map((p, idx) => {
         const appearance = getCustomProviderAppearance(p.name, p.url);
         return {
@@ -529,32 +694,23 @@ const HomeScreen = ({ navigation }) => {
         };
       });
 
-      setAvailableProviders([...nativeProviders, ...formattedCustomProviders]);
-      setShowPicker(true);
+      setAvailableProviders([...engineProviders, ...nativeProviders, ...formattedCustomProviders, ...movieboxProviders, ...socialProviders]);
       return;
     }
 
-    // Movies / TV: fetch TMDB watch providers and show picker
-    const title = movie.title || movie.name || 'Movie';
-    const mediaType = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
-    const tmdbId = movie.id;
-    setSelectedQuickItem({ name: title, mediaType, tmdbId });
-    setAvailableProviders([]); // Clear previous
+    // 3. Fetch TMDB providers in background for Movies/TV
     setIsFetchingProviders(true);
-    setShowPicker(true); // OPEN MODAL IMMEDIATELY for instant feedback
-
     try {
-      const providers = await fetchWatchProviders(movie.id, mediaType);
-      const streamingProviders = [];
-      const seenIds = new Set(); // Deduplicate (Prime Video vs Prime Video with Ads)
+      const providers = await fetchWatchProviders(tmdbId, mediaType);
+      const fetchedOttProviders = [];
+      const seenIds = new Set();
 
-      // Flatrate (subscription streaming) providers
       if (providers?.flatrate) {
         providers.flatrate.forEach(p => {
           const mapped = OTT_PROVIDER_MAP[p.provider_id];
           if (mapped && !seenIds.has(mapped.id)) {
             seenIds.add(mapped.id);
-            streamingProviders.push({
+            fetchedOttProviders.push({
               ...mapped,
               logoUrl: p.logo_path 
                 ? `https://image.tmdb.org/t/p/w200${p.logo_path}` 
@@ -563,70 +719,106 @@ const HomeScreen = ({ navigation }) => {
           }
         });
       }
-
-      // Always Add Enabled MovieBox Sources as Primary Hubs
-      (movieboxSources || [])
-        .filter(s => s.enabled)
-        .forEach((s, idx) => {
-          const mbDomain = s.url.trim();
-          const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
-          const appearance = getCustomProviderAppearance(s.name || mbSearchDomain, mbDomain);
-          streamingProviders.push({
-            id: `moviebox_${idx}`,
-            name: s.name || mbSearchDomain, // Show specific domain
-            icon: appearance.icon,
-            color: appearance.color,
-            logoUrl: null,
-            searchUrl: `https://${mbSearchDomain}/search?q=`,
-            appScheme: null,
-            customDomain: mbDomain,
-          });
-        });
-
-      // Always Add YouTube as Primary Hub
-      streamingProviders.push({
-        id: 'youtube',
-        name: 'YouTube',
-        icon: 'youtube',
-        color: '#FF0000',
-        logoUrl: null, // Force use of native icon for brand consistency and reliability
-        searchUrl: 'https://www.youtube.com/results?search_query=',
-        appScheme: 'youtube://',
-      });
-
-      if (streamingProviders.length === 0) {
-        // Show discovery link if no providers enabled
-        streamingProviders.push({
-          id: 'discovery',
-          name: 'Explore All',
-          icon: 'search',
-          color: Colors.accentPurple,
-          url: 'https://fmhy.net/video#streaming-sites',
-        });
-      }
-
-      setAvailableProviders(streamingProviders);
+      
+      // Merge with priority: Engine > OTT > MovieBox > Social
+      setAvailableProviders([
+        ...engineProviders,
+        ...fetchedOttProviders,
+        ...movieboxProviders,
+        ...socialProviders
+      ]);
     } catch (e) {
-      console.error('[Home] Failed to fetch providers:', e);
+      console.warn('[Home] Failed to fetch TMDB providers:', e);
     } finally {
       setIsFetchingProviders(false);
     }
   };
 
-  const handleSelectProvider = async (provider) => {
+
+  const handleSelectEpisode = (episode, season) => {
+    setShowSeriesPicker(false);
+    
+    // Trigger provider selection immediately with the chosen episode
+    handlePlayPress({
+      ...selectedQuickItem,
+      id: selectedQuickItem.tmdbId,
+      mediaType: 'tv',
+      media_type: 'tv',
+      title: selectedQuickItem.name,
+      season: season.season_number,
+      episode: episode.episode_number,
+      episodeTitle: episode.name,
+      thumb: episode.still_path 
+        ? `https://image.tmdb.org/t/p/w400${episode.still_path}` 
+        : selectedQuickItem.thumb
+    }, episode);
+  };
+
+  const handleSelectProvider = async (provider, rememberChoice = false, forcedItem = null) => {
     setShowPicker(false);
-    const title = selectedQuickItem?.name || '';
-    const mediaType = selectedQuickItem?.mediaType;
-    const tmdbId = selectedQuickItem?.tmdbId;
+    const movie = forcedItem || selectedQuickItem;
+    const title = movie?.name || movie?.title || '';
+    const mediaType = movie?.mediaType || movie?.media_type;
+    const tmdbId = movie?.tmdbId || movie?.id;
+
+    if (rememberChoice) {
+      console.log(`[Home] Saving ${provider.id} as default provider.`);
+      await saveDefaultProvider(provider.id);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(`${provider.name} set as default. Change this in Settings.`, ToastAndroid.LONG);
+      }
+    }
+
+    console.log(`[Home] Selecting Provider: ${provider.name} for ${title} (${mediaType}:${tmdbId})`);
+
+    // 4. Check for existing progress to resume automatically
+    let resumeTime = 0;
+    try {
+      const cwItems = await loadContinueWatching();
+      const s = movie.season || 1;
+      const e = movie.episode || 1;
+      
+      const existing = cwItems.find(i => {
+        if (mediaType === 'tv') {
+          return i.tmdbId === tmdbId && i.mediaType === 'tv' && i.season === s && i.episode === e;
+        }
+        return i.tmdbId === tmdbId && i.mediaType === mediaType;
+      });
+
+      if (existing) {
+        resumeTime = existing.currentTime || 0;
+        console.log(`[Home] Resuming ${title} (S${s}E${e}) from ${resumeTime}s`);
+      }
+    } catch (err) {}
 
     const result = await navigateToOTT(
       provider,
-      title,
+      movie.episodeTitle || title,
       tmdbId,
       mediaType,
-      provider.customDomain, // Use specific domain from provider object
-      navigation
+      provider.customDomain,
+      navigation,
+      movie.season || 1,
+      movie.episode || 1,
+      resumeTime,
+      movie.thumb,
+      title // Pass the showName (original title)
     );
+
+    if (result && result.status === 'unavailable') {
+      setRefreshing(false);
+      if (Platform.OS === 'android') {
+        ToastAndroid.show(
+          result.message || 'Not available on StreamDeck Engine. Try other sources.',
+          ToastAndroid.LONG
+        );
+      } else {
+        Alert.alert('Content Unavailable', result.message || 'Not available on StreamDeck Engine.');
+      }
+      // Re-open the modal so user can pick another source
+      setShowPicker(true);
+      return;
+    }
 
     if (result && result.status === 'unverified') {
       setRedirectInfo({ ...result, provider });
@@ -670,11 +862,49 @@ const HomeScreen = ({ navigation }) => {
   };
 
   const handleContinueWatchingPress = item => {
-    navigation.navigate('WebView', {
-      url: item.url,
-      title: item.title,
-      appId: item.appId,
-    });
+    // If it's a Direct Engine item, use navigateToOTT to ensure we check availability and pass resumeTime
+    if (item.appId === 'direct' || item.tmdbId) {
+      const provider = { 
+        id: item.appId || 'direct', 
+        name: item.appId === 'direct' ? 'StreamDeck Engine' : (item.title || 'Video'), 
+        color: Colors.accentPurple 
+      };
+      
+      navigateToOTT(
+        provider,
+        item.title,
+        item.tmdbId,
+        item.mediaType || 'movie',
+        null, // movieboxDomain
+        navigation,
+        item.season || 1,
+        item.episode || 1,
+        item.currentTime || 0,
+        item.thumb,
+        item.showName
+      );
+    } else {
+      // Fallback for items without TMDB ID (like custom streams)
+      navigation.navigate('WebView', {
+        url: item.url,
+        title: item.title,
+        appId: item.appId,
+        resumeTime: item.currentTime,
+        thumb: item.thumb
+      });
+    }
+  };
+
+  const handleRemoveContinueWatching = async (id) => {
+    const { removeContinueWatchingEntry } = require('../utils/storage');
+    const updated = await removeContinueWatchingEntry(id);
+    setContinueWatching(updated);
+    
+    // Sync removal to cloud immediately
+    const user = getCurrentUser();
+    if (user) {
+      syncWithCloud(user.uid);
+    }
   };
 
   const filterContent = (items, type) => {
@@ -712,11 +942,15 @@ const HomeScreen = ({ navigation }) => {
     );
   }
 
-  // Hero items now come from state (sports + trending)
-
+  const isAnyModalOpen = showPicker || showProviderDropdown || showRedirectWarning || showSeriesPicker;
+  
   return (
-    <View style={[styles.screen, { paddingBottom: insets.bottom || 80 }]}>
+    <View style={styles.screen}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+      
+      {/* Modals removed from here and moved to bottom for better layering */}
+
+      <HomeSkeleton visible={loading} />
       <UpdateModal />
       <ScrollView
         style={styles.scrollView}
@@ -788,12 +1022,14 @@ const HomeScreen = ({ navigation }) => {
         <ContinueWatchingRow
           items={continueWatching}
           onItemPress={handleContinueWatchingPress}
+          onRemoveItem={handleRemoveContinueWatching}
         />
 
         {/* What's Trending Globally */}
         <TrendingRow
           title="What's Trending Globally"
           movies={globalTrending}
+          isLoading={loadingGlobal}
           onMoviePress={handlePlayPress}
         />
 
@@ -801,7 +1037,17 @@ const HomeScreen = ({ navigation }) => {
         <TrendingRow
           title={`What's Trending in ${regionName}`}
           movies={localTrending}
+          isLoading={loadingLocal}
           onMoviePress={handlePlayPress}
+          titleExtra={
+            <TouchableOpacity 
+              onPress={() => setShowRegionInfo(true)} 
+              style={{ padding: 4 }} 
+              activeOpacity={0.6}
+            >
+              <Ionicons name="information-circle-outline" size={18} color={Colors.textMuted} />
+            </TouchableOpacity>
+          }
         />
 
         {/* Provider Trending Row */}
@@ -814,6 +1060,15 @@ const HomeScreen = ({ navigation }) => {
             isLoading={loadingProvider}
             onMoviePress={handlePlayPress}
             style={{ marginBottom: 0 }}
+            titleExtra={
+              <TouchableOpacity 
+                onPress={() => setShowRegionInfo(true)} 
+                style={{ padding: 4 }} 
+                activeOpacity={0.6}
+              >
+                <Ionicons name="information-circle-outline" size={18} color={Colors.textMuted} />
+              </TouchableOpacity>
+            }
           />
         </View>
 
@@ -821,42 +1076,58 @@ const HomeScreen = ({ navigation }) => {
         <View style={styles.bottomPadding} />
       </ScrollView>
 
-      {/* Provider Dropdown Modal */}
-      <Modal
-        visible={showProviderDropdown}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowProviderDropdown(false)}>
+        <SeriesPickerModal
+          visible={showSeriesPicker}
+          item={selectedQuickItem}
+          continueWatching={continueWatching}
+          onClose={() => setShowSeriesPicker(false)}
+          onSelectEpisode={handleSelectEpisode}
+        />
+
+        <MediaProviderModal
+          visible={showPicker}
+          providers={availableProviders}
+          isFetching={isFetchingProviders}
+          onClose={() => setShowPicker(false)}
+          onSelectProvider={handleSelectProvider}
+        />
+
+      <Modal 
+        visible={showProviderDropdown} 
+        transparent={true} 
+        animationType="none"
+        onRequestClose={() => setShowProviderDropdown(false)}
+      >
         <View style={styles.modalOverlay}>
-          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowProviderDropdown(false)} activeOpacity={1} />
-          <View style={[styles.modalContent, { paddingBottom: 20 }]}>
+          <TouchableOpacity 
+            style={styles.modalDismissZone} 
+            onPress={() => setShowProviderDropdown(false)} 
+            activeOpacity={1} 
+          />
+          <Animated.View 
+            entering={FadeInDown.duration(300)}
+            exiting={FadeOutDown.duration(200)}
+            style={[styles.modalContent, { maxHeight: '70%', paddingBottom: modalSafePadding }]}
+          >
             <View style={styles.modalHeader}>
               <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Select Provider</Text>
+              <Text style={styles.modalTitle}>Switch Provider</Text>
+              <Text style={styles.modalSubtitle}>Streaming services in your region</Text>
             </View>
 
             <View style={styles.modalSearchContainer}>
-              <Ionicons name="search" size={18} color="rgba(255,255,255,0.3)" style={{ marginLeft: 12 }} />
               <TextInput
                 style={styles.modalSearchInput}
-                placeholder="Search platforms..."
+                placeholder="Search providers..."
                 placeholderTextColor="rgba(255,255,255,0.3)"
                 value={providerSearch}
                 onChangeText={setProviderSearch}
-                autoCorrect={false}
               />
-              {providerSearch.length > 0 && (
-                <TouchableOpacity onPress={() => setProviderSearch('')} style={{ padding: 8 }}>
-                  <Ionicons name="close-circle" size={18} color="rgba(255,255,255,0.4)" />
-                </TouchableOpacity>
-              )}
             </View>
 
-            <ScrollView style={{ marginTop: 10, maxHeight: 380 }} showsVerticalScrollIndicator={false}>
-              {regionalProviders
-                .filter(p => p.provider_name.toLowerCase().includes(providerSearch.toLowerCase()))
-                .map(p => {
-                const isActive = activeProvider.id === p.provider_id;
+            <ScrollView showsVerticalScrollIndicator={false}>
+              {regionalProviders.filter(p => p.provider_name.toLowerCase().includes(providerSearch.toLowerCase())).map(p => {
+                const isActive = p.provider_id === activeProvider.id;
                 const logoUrl = p.logo_path ? `https://image.tmdb.org/t/p/w200${p.logo_path}` : null;
                 const initials = p.provider_name.substring(0, 2).toUpperCase();
 
@@ -882,79 +1153,43 @@ const HomeScreen = ({ navigation }) => {
                 );
               })}
             </ScrollView>
-          </View>
-        </View>
-      </Modal>
 
-      {/* Smart Provider Selection Modal — fade animation */}
-      <Modal
-        visible={showPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowPicker(false)}>
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Available On</Text>
-              <Text style={styles.modalSubtitle}>Select where to stream {selectedQuickItem?.name}</Text>
-            </View>
-
-            <View style={styles.providerGrid}>
-              {isFetchingProviders ? (
-                <View style={styles.modalLoading}>
-                  <ActivityIndicator size="small" color={Colors.accentPurple} />
-                  <Text style={styles.modalLoadingText}>Curating streams...</Text>
-                </View>
-              ) : (
-                availableProviders.map(provider => (
-                  <TouchableOpacity
-                    key={provider.id}
-                    style={styles.providerItem}
-                    onPress={() => handleSelectProvider(provider)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? 'rgba(255,255,255,0.05)' : provider.color }]}>
-                      {provider.logoUrl ? (
-                        <Image
-                          source={{ uri: provider.logoUrl }}
-                          style={styles.providerLogo}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Icon name={provider.icon} size={32} color="#fff" />
-                      )}
-                    </View>
-                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </View>
-
-            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
-              <Text style={styles.closeModalText}>Cancel</Text>
+            <TouchableOpacity style={styles.simpleCloseBtn} onPress={() => setShowProviderDropdown(false)}>
+              <Text style={styles.simpleCloseText}>Cancel</Text>
             </TouchableOpacity>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
 
-      {/* Themed Redirect Warning Modal */}
-      <Modal
-        visible={showRedirectWarning}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowRedirectWarning(false)}>
+      <Modal 
+        visible={showRedirectWarning} 
+        transparent={true} 
+        animationType="none"
+        onRequestClose={() => setShowRedirectWarning(false)}
+      >
         <View style={styles.modalOverlay}>
-          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowRedirectWarning(false)} activeOpacity={1} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalHandle} />
-              <View style={styles.warningIconBox}>
-                <Ionicons name="map" size={32} color={Colors.accentPurple} />
+          <TouchableOpacity 
+            style={styles.modalDismissZone} 
+            onPress={() => setShowRedirectWarning(false)} 
+            activeOpacity={1} 
+          />
+          <Animated.View 
+            entering={FadeInDown.duration(300)}
+            exiting={FadeOutDown.duration(200)}
+            style={[styles.redirectModalContent, { paddingBottom: modalSafePadding }]}
+          >
+            <LinearGradient
+              colors={[Colors.accentPurple, Colors.accentPink]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.modalAccentBar}
+            />
+            <View style={styles.redirectHeader}>
+              <View style={styles.redirectIconCircle}>
+                <Icon name="open-in-new" size={32} color={Colors.accentPurple} />
               </View>
-              <Text style={styles.modalTitle}>Source Not Verified</Text>
-              <Text style={styles.modalSubtitle}>We don't have a direct path for this source yet.</Text>
+              <Text style={styles.redirectTitle}>One Final Step</Text>
+              <Text style={styles.redirectSubtitle}>StreamDeck Engine is searching...</Text>
             </View>
 
             <View style={styles.warningCard}>
@@ -963,7 +1198,7 @@ const HomeScreen = ({ navigation }) => {
               </Text>
               <View style={styles.stepContainer}>
                 <Text style={styles.stepNumber}>1</Text>
-                <Text style={styles.stepText}>Tap 'Continue' to open the site.</Text>
+                <Text style={styles.stepText}>Tap the 'Continue' button to open the site.</Text>
               </View>
               <View style={styles.stepContainer}>
                 <Text style={styles.stepNumber}>2</Text>
@@ -982,23 +1217,27 @@ const HomeScreen = ({ navigation }) => {
                   end={{ x: 1, y: 0 }}
                   style={styles.btnGradient}
                 >
-                  <Text style={styles.confirmBtnText}>Continue to Site</Text>
+                  <Text style={styles.confirmBtnText}>Continue</Text>
                 </LinearGradient>
               </TouchableOpacity>
             </View>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
-      <HomeSkeleton visible={loading} />
+
+      <RegionInfoModal
+        visible={showRegionInfo}
+        onClose={() => setShowRegionInfo(false)}
+        regionName={regionName}
+        onNavigateToSettings={() => navigation.navigate('Settings', { highlightSection: 'discovery' })}
+      />
+
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: Colors.bgPrimary,
-  },
+  screen: { flex: 1, backgroundColor: Colors.bgPrimary },
   scrollView: {
     flex: 1,
   },
@@ -1292,28 +1531,28 @@ const styles = StyleSheet.create({
   },
 
   // ── Modal: smooth fade overlay ──────────────────────
+  // Removed duplicate modalOverlay definition
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.6)',
+    backgroundColor: 'rgba(0,0,0,0.6)', // Slightly darker for better contrast
     justifyContent: 'flex-end',
   },
   modalDismissZone: {
     flex: 1,
   },
   modalContent: {
-    backgroundColor: '#16161E',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
-    paddingBottom: 44,
+    backgroundColor: '#111118',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 24,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
-    // Subtle upward shadow for depth
     elevation: 24,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.4,
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.5,
     shadowRadius: 20,
   },
   modalHeader: {
@@ -1380,17 +1619,20 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.75)',
     textAlign: 'center',
   },
-  closeModalBtn: {
-    marginTop: 8,
-    paddingVertical: 14,
+  simpleCloseBtn: {
+    marginTop: 0,
+    height: 32, // Minimal height for centering
     alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderRadius: 16,
+    justifyContent: 'center',
   },
-  closeModalText: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: 'rgba(255,255,255,0.35)',
+  simpleCloseText: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: 'rgba(255,255,255,0.4)',
+    letterSpacing: 1.2,
+    textTransform: 'uppercase',
+    includeFontPadding: false,
+    textAlignVertical: 'center',
   },
   // ── Redirect Warning Modal ─────────────────────────
   warningIconBox: {
@@ -1554,6 +1796,306 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
     paddingHorizontal: 12,
+  },
+  seriesItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  seriesItemInfo: {
+    flex: 1,
+  },
+  seriesItemTitle: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  seriesItemSub: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  backToSeasons: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 20,
+    gap: 8,
+    paddingHorizontal: 4,
+  },
+  backToSeasonsText: {
+    color: Colors.accentPurple,
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  playIconBox: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: Colors.accentPurple,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  // ── New Series Picker Styles ──
+  modalTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  titleIconBar: {
+    width: 3,
+    height: 18,
+    backgroundColor: Colors.accentPink,
+    borderRadius: 2,
+  },
+  seriesControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    gap: 10,
+    marginBottom: 20,
+    zIndex: 10,
+  },
+  seasonSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    gap: 6,
+  },
+  seasonSelectorText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  epSearchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+  },
+  epSearchInput: {
+    flex: 1,
+    height: 36,
+    color: '#fff',
+    fontSize: 13,
+    paddingHorizontal: 8,
+  },
+  sortBtn: {
+    width: 36,
+    height: 36,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.1)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  seasonDropdown: {
+    position: 'absolute',
+    top: 135,
+    left: 20,
+    width: 140,
+    backgroundColor: '#1a1a24',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 10 },
+    shadowOpacity: 0.5,
+    shadowRadius: 20,
+    elevation: 20,
+    zIndex: 100,
+    padding: 6,
+  },
+  seasonOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 10,
+    borderRadius: 8,
+  },
+  seasonOptionActive: {
+    backgroundColor: 'rgba(157, 78, 221, 0.1)',
+  },
+  seasonOptionText: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  seasonOptionCount: {
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: 11,
+  },
+  episodeCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  epThumbContainer: {
+    width: 120,
+    height: 68,
+    borderRadius: 8,
+    overflow: 'hidden',
+    backgroundColor: '#000',
+  },
+  epThumb: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.8,
+  },
+  epBadge: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    backgroundColor: 'rgba(0,0,0,0.7)',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.2)',
+  },
+  epBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+  epInfo: {
+    flex: 1,
+    marginLeft: 12,
+    justifyContent: 'center',
+  },
+  epTitle: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '700',
+    marginBottom: 2,
+  },
+  epMeta: {
+    color: 'rgba(255,255,255,0.4)',
+    fontSize: 11,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  epOverview: {
+    color: 'rgba(255,255,255,0.35)',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  providerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  providerRowIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+    overflow: 'hidden',
+  },
+  providerRowLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+  },
+  providerRowInfo: {
+    flex: 1,
+  },
+  providerRowName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  providerRowStatus: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.35)',
+    fontWeight: '600',
+  },
+  providerCategory: {
+    marginBottom: 20,
+  },
+  providerCategoryTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: 'rgba(255,255,255,0.3)',
+    letterSpacing: 1.5,
+    marginBottom: 10,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+  },
+  providerRowTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qualityBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(157, 78, 221, 0.15)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(157, 78, 221, 0.3)',
+  },
+  qualityBadgeText: {
+    color: Colors.accentPurple,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  providerRowGlow: {
+    backgroundColor: 'rgba(157, 78, 221, 0.06)',
+    borderColor: 'rgba(157, 78, 221, 0.15)',
+  },
+  epMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  episodeCardActive: {
+    backgroundColor: 'rgba(157, 78, 221, 0.05)',
+    borderColor: 'rgba(157, 78, 221, 0.2)',
+    borderWidth: 1.5,
+  },
+  nowWatchingBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: Colors.accentPurple,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  nowWatchingText: {
+    color: '#fff',
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
 });
 

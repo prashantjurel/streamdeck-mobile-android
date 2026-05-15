@@ -1,4 +1,3 @@
-// StreamDeck Mobile — Source Manager Screen
 import React, { useState, useEffect } from 'react';
 import {
   View,
@@ -10,12 +9,15 @@ import {
   StatusBar,
   ActivityIndicator,
   Linking,
+  Alert,
+  Switch,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import LinearGradient from 'react-native-linear-gradient';
 import { Colors, FontSizes, Spacing, BorderRadius } from '../theme/colors';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import CustomAlert from '../components/CustomAlert';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+
 import {
   loadSettings,
   saveSettings,
@@ -23,24 +25,16 @@ import {
 
 const SourceManagerScreen = ({ navigation, route }) => {
   const insets = useSafeAreaInsets();
-  const { type } = route.params || { type: 'moviebox' }; // 'moviebox' or 'sports'
+  const { type } = route.params || { type: 'moviebox' };
   
   const [settings, setSettings] = useState(null);
   const [newName, setNewName] = useState('');
   const [newUrl, setNewUrl] = useState('');
   const [editingIndex, setEditingIndex] = useState(null);
   const [isTesting, setIsTesting] = useState(false);
-  
-  const [alertConfig, setAlertConfig] = useState({ 
-    visible: false, 
-    title: '', 
-    message: '', 
-    onConfirm: () => setAlertConfig(prev => ({ ...prev, visible: false })),
-    confirmText: 'OK',
-    onCancel: null,
-    cancelText: null,
-    type: 'warning'
-  });
+  const [confirmDeleteIndex, setConfirmDeleteIndex] = useState(null);
+  const [showForceAdd, setShowForceAdd] = useState(false);
+
 
   useEffect(() => {
     loadData();
@@ -51,138 +45,101 @@ const SourceManagerScreen = ({ navigation, route }) => {
     setSettings(s);
   };
 
-  const showAlert = (title, message, onConfirm = null, confirmText = 'OK', onCancel = null, cancelText = null, type = 'warning') => {
-    setAlertConfig({
-      visible: true,
-      title,
-      message,
-      onConfirm: () => {
-        if (onConfirm) onConfirm();
-        setAlertConfig(prev => ({ ...prev, visible: false }));
-      },
-      confirmText,
-      onCancel: onCancel ? () => {
-        if (onCancel) onCancel();
-        setAlertConfig(prev => ({ ...prev, visible: false }));
-      } : null,
-      cancelText,
-      type
-    });
-  };
+
 
   const testUrlAvailability = async (url) => {
     let testUrl = url.trim();
     if (!/^https?:\/\//i.test(testUrl)) testUrl = `https://${testUrl}`;
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
-      await fetch(testUrl, { method: 'HEAD', signal: controller.signal });
-      clearTimeout(timeoutId);
-      return true;
+      const fetchPromise = fetch(testUrl);
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Timeout')), 5000)
+      );
+      const res = await Promise.race([fetchPromise, timeoutPromise]);
+      return res && res.status >= 200 && res.status < 600;
     } catch (e) {
       return false;
     }
   };
 
-  const handleAdd = async () => {
+  const handleAdd = async (force = false) => {
     if (!newName || !newUrl) return;
     
-    setIsTesting(true);
-    const isWorking = await testUrlAvailability(newUrl);
-    setIsTesting(false);
+    if (!force) {
+      setIsTesting(true);
+      const isWorking = await testUrlAvailability(newUrl);
+      setIsTesting(false);
 
-    if (!isWorking) {
-      showAlert(
-        'Unreachable URL', 
-        'This link is not responding. Check for typos or find new sources.',
-        () => finalizeAdd(false),
-        'Add Anyway',
-        () => Linking.openURL('https://fmhy.net/video#streaming-sites'),
-        'Find Sources',
-        'error'
-      );
-      return;
+      if (!isWorking) {
+        setShowForceAdd(true);
+        return;
+      }
     }
-    finalizeAdd(true);
+    
+    finalizeAdd(force ? false : true);
+    setShowForceAdd(false);
   };
 
   const finalizeAdd = async (isWorking) => {
-    const updated = { 
-      ...settings,
-      movieboxSources: [...(settings.movieboxSources || [])],
-      liveSportsProviders: [...(settings.liveSportsProviders || [])]
-    };
-    const list = type === 'moviebox' ? updated.movieboxSources : updated.liveSportsProviders;
+    const newSettings = JSON.parse(JSON.stringify(settings));
+    const list = type === 'moviebox' ? newSettings.movieboxSources : newSettings.liveSportsProviders;
     
     const enabledCount = list.filter(s => s.enabled).length;
     const shouldEnable = isWorking && enabledCount < 3;
 
     list.push({ name: newName, url: newUrl, enabled: shouldEnable });
     
-    setSettings(updated);
-    await saveSettings(updated);
+    setSettings(newSettings);
+    await saveSettings(newSettings);
     setNewName('');
     setNewUrl('');
-    
-    if (!shouldEnable && isWorking && enabledCount >= 3) {
-      showAlert('Limit Reached', 'Source added but disabled (max 3 enabled sources reached).', null, 'OK', null, null, 'info');
-    }
   };
 
   const handleDelete = async (index) => {
-    showAlert(
-      'Delete Source',
-      'Are you sure you want to remove this source?',
-      async () => {
-        const updated = { 
-          ...settings,
-          movieboxSources: [...(settings.movieboxSources || [])],
-          liveSportsProviders: [...(settings.liveSportsProviders || [])]
-        };
-        if (type === 'moviebox') {
-          updated.movieboxSources = updated.movieboxSources.filter((_, i) => i !== index);
-        } else {
-          updated.liveSportsProviders = updated.liveSportsProviders.filter((_, i) => i !== index);
-        }
-        setSettings(updated);
-        await saveSettings(updated);
-      },
-      'Delete',
-      () => {},
-      'Cancel',
-      'error'
-    );
+    if (confirmDeleteIndex !== index) {
+      setConfirmDeleteIndex(index);
+      // Auto-reset after 3 seconds
+      setTimeout(() => setConfirmDeleteIndex(null), 3000);
+      return;
+    }
+
+    const newSettings = JSON.parse(JSON.stringify(settings));
+    if (type === 'moviebox') {
+      newSettings.movieboxSources = newSettings.movieboxSources.filter((_, i) => i !== index);
+    } else {
+      newSettings.liveSportsProviders = newSettings.liveSportsProviders.filter((_, i) => i !== index);
+    }
+    setSettings(newSettings);
+    await saveSettings(newSettings);
+    setConfirmDeleteIndex(null);
+  };
+
+  const toggleSource = async (index) => {
+    const newSettings = JSON.parse(JSON.stringify(settings));
+    const list = type === 'moviebox' ? newSettings.movieboxSources : newSettings.liveSportsProviders;
+    
+    const currentlyEnabled = list.filter(s => s.enabled).length;
+    if (!list[index].enabled && currentlyEnabled >= 3) {
+      Alert.alert('Limit Reached', 'You can only have 3 active sources at once.');
+      return;
+    }
+
+    list[index].enabled = !list[index].enabled;
+    setSettings(newSettings);
+    await saveSettings(newSettings);
   };
 
   const handleUpdate = async () => {
     if (editingIndex === null || !newName || !newUrl) return;
-
     setIsTesting(true);
     const isWorking = await testUrlAvailability(newUrl);
     setIsTesting(false);
-
-    if (!isWorking) {
-      showAlert(
-        'Unreachable URL', 
-        'This updated link is not responding. Check for typos or find new sources.',
-        () => finalizeUpdate(false),
-        'Save Anyway',
-        () => Linking.openURL('https://fmhy.net/video#streaming-sites'),
-        'Find Sources',
-        'error'
-      );
-      return;
-    }
-    finalizeUpdate(true);
+    finalizeUpdate(isWorking);
   };
 
   const finalizeUpdate = async (isWorking) => {
-    const updated = { 
-      ...settings,
-      movieboxSources: [...(settings.movieboxSources || [])],
-      liveSportsProviders: [...(settings.liveSportsProviders || [])]
-    };
-    const list = type === 'moviebox' ? updated.movieboxSources : updated.liveSportsProviders;
+    const newSettings = JSON.parse(JSON.stringify(settings));
+    const list = type === 'moviebox' ? newSettings.movieboxSources : newSettings.liveSportsProviders;
     
     list[editingIndex] = { 
       ...list[editingIndex], 
@@ -191,286 +148,145 @@ const SourceManagerScreen = ({ navigation, route }) => {
       enabled: isWorking ? list[editingIndex].enabled : false
     };
 
-    setSettings(updated);
-    await saveSettings(updated);
+    setSettings(newSettings);
+    await saveSettings(newSettings);
     setEditingIndex(null);
     setNewName('');
     setNewUrl('');
   };
 
-  const startEdit = (index, item) => {
-    setEditingIndex(index);
-    setNewName(item.name);
-    setNewUrl(item.url);
-  };
-
   if (!settings) return null;
-
   const currentList = type === 'moviebox' ? settings.movieboxSources : settings.liveSportsProviders;
 
   return (
     <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <StatusBar barStyle="light-content" />
       
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-          <Ionicons name="chevron-back" size={24} color={Colors.textPrimary} />
+          <Ionicons name="chevron-back" size={24} color="#fff" />
         </TouchableOpacity>
-        <Text style={styles.headerTitle}>
-          Manage {type === 'moviebox' ? 'MovieBox' : 'Sports'}
-        </Text>
+        <Text style={styles.headerTitle}>Manage {type === 'moviebox' ? 'MovieBox' : 'Sports'}</Text>
         <View style={{ width: 40 }} />
       </View>
 
-      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-        
-        {/* Add Section */}
-        <View style={styles.card}>
-          <Text style={styles.sectionTitle}>
-            {editingIndex !== null ? 'Edit Source' : 'Add New Source'}
-          </Text>
-          <TextInput
-            style={styles.largeInput}
-            value={newName}
-            onChangeText={setNewName}
-            placeholder="Name (e.g. Cineby)"
-            placeholderTextColor="rgba(255,255,255,0.4)"
-          />
-          <TextInput
-            style={styles.largeInput}
-            value={newUrl}
-            onChangeText={setNewUrl}
-            placeholder="URL (e.g. cineby.sc)"
-            placeholderTextColor="rgba(255,255,255,0.4)"
-            autoCapitalize="none"
-          />
-          
-          <View style={styles.actionRow}>
-            {editingIndex !== null && (
-              <TouchableOpacity 
-                style={styles.cancelBtn} 
-                onPress={() => {
-                  setEditingIndex(null);
-                  setNewName('');
-                  setNewUrl('');
-                }}
-              >
-                <Text style={styles.cancelBtnText}>Cancel</Text>
-              </TouchableOpacity>
-            )}
-            <TouchableOpacity 
-              style={[styles.primaryBtn, isTesting && { opacity: 0.7 }]} 
-              onPress={editingIndex !== null ? handleUpdate : handleAdd}
-              disabled={isTesting}
-            >
-              <LinearGradient
-                colors={[Colors.accentPurple, Colors.accentPink]}
-                style={styles.btnGradient}
-              >
-                {isTesting ? (
-                  <ActivityIndicator color="#fff" />
-                ) : (
-                  <Text style={styles.primaryBtnText}>
-                    {editingIndex !== null ? 'Update Source' : 'Add Source'}
-                  </Text>
-                )}
-              </LinearGradient>
-            </TouchableOpacity>
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        <View style={styles.addCard}>
+          <View style={styles.inputRow}>
+            <TextInput
+              style={[styles.input, { flex: 1.2 }]}
+              value={newName}
+              onChangeText={setNewName}
+              placeholder="Name"
+              placeholderTextColor="#666"
+            />
+            <TextInput
+              style={[styles.input, { flex: 2 }]}
+              value={newUrl}
+              onChangeText={setNewUrl}
+              placeholder="URL"
+              placeholderTextColor="#666"
+              autoCapitalize="none"
+            />
           </View>
+          
+          <TouchableOpacity 
+            style={[styles.addBtn, isTesting && { opacity: 0.6 }]} 
+            onPress={editingIndex !== null ? handleUpdate : (showForceAdd ? () => handleAdd(true) : () => handleAdd(false))}
+            disabled={isTesting}
+          >
+            <LinearGradient 
+              colors={showForceAdd ? ['#ff4444', '#cc0000'] : [Colors.accentPurple, Colors.accentPink]} 
+              start={{x:0,y:0}} end={{x:1,y:0}} 
+              style={styles.addGradient}
+            >
+              {isTesting ? <ActivityIndicator size="small" color="#fff" /> : (
+                <Text style={styles.addBtnText}>
+                  {editingIndex !== null ? 'SAVE CHANGES' : (showForceAdd ? 'URL UNREACHABLE - ADD ANYWAY?' : 'ADD NEW SOURCE')}
+                </Text>
+              )}
+            </LinearGradient>
+          </TouchableOpacity>
+          {showForceAdd && (
+            <TouchableOpacity onPress={() => setShowForceAdd(false)} style={styles.cancelAdd}>
+              <Text style={styles.cancelAddText}>Cancel</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
-        {/* List Section */}
-        <Text style={styles.listLabel}>Current Sources</Text>
+        <Text style={styles.label}>ACTIVE SOURCES ({currentList.filter(s => s.enabled).length}/3)</Text>
+        
         {currentList.map((item, idx) => (
-          <View key={idx} style={styles.sourceCard}>
-            <View style={styles.sourceInfo}>
-              <Text style={styles.sourceName}>{item.name}</Text>
-              <Text style={styles.sourceUrl} numberOfLines={1}>{item.url}</Text>
+          <View key={`${item.url}-${idx}`} style={[styles.sourceItem, !item.enabled && { opacity: 0.6 }]}>
+            <View style={styles.sourceMain}>
+              <View style={styles.sourceText}>
+                <Text style={styles.sourceName}>{item.name}</Text>
+                <Text style={styles.sourceUrl} numberOfLines={1}>{item.url}</Text>
+              </View>
+              <Switch
+                value={item.enabled}
+                onValueChange={() => toggleSource(idx)}
+                trackColor={{ false: '#222', true: Colors.accentPurple + '40' }}
+                thumbColor={item.enabled ? Colors.accentPurple : '#444'}
+              />
             </View>
-            <View style={styles.sourceActions}>
-              <TouchableOpacity onPress={() => startEdit(idx, item)} style={styles.editBtn}>
-                <Text style={styles.btnIcon}>✏️</Text>
+            <View style={styles.sourceFooter}>
+              <TouchableOpacity onPress={() => { setEditingIndex(idx); setNewName(item.name); setNewUrl(item.url); }} style={styles.toolBtn}>
+                <Icon name="pencil" size={16} color="#aaa" />
+                <Text style={styles.toolText}>Edit</Text>
               </TouchableOpacity>
-              <TouchableOpacity onPress={() => handleDelete(idx)} style={styles.deleteBtn}>
-                <Text style={styles.btnIcon}>🗑️</Text>
+              <View style={styles.dot} />
+              <TouchableOpacity 
+                onPress={() => handleDelete(idx)} 
+                style={[styles.toolBtn, confirmDeleteIndex === idx && styles.confirmBtn]}
+              >
+                <Icon 
+                  name={confirmDeleteIndex === idx ? "alert-circle" : "trash-can-outline"} 
+                  size={16} 
+                  color={confirmDeleteIndex === idx ? "#fff" : "#ff4444"} 
+                />
+                <Text style={[styles.toolText, { color: confirmDeleteIndex === idx ? "#fff" : "#ff4444" }]}>
+                  {confirmDeleteIndex === idx ? "CONFIRM?" : "Remove"}
+                </Text>
               </TouchableOpacity>
             </View>
           </View>
         ))}
-        
-        {currentList.length === 0 && (
-          <View style={styles.emptyState}>
-            <Text style={styles.emptyText}>No sources added yet.</Text>
-          </View>
-        )}
 
+        {currentList.length === 0 && <Text style={styles.empty}>No sources added.</Text>}
       </ScrollView>
 
-      <CustomAlert 
-        visible={alertConfig.visible}
-        title={alertConfig.title}
-        message={alertConfig.message}
-        onConfirm={alertConfig.onConfirm}
-        confirmText={alertConfig.confirmText}
-        onCancel={alertConfig.onCancel}
-        cancelText={alertConfig.cancelText}
-        type={alertConfig.type}
-      />
+
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  screen: {
-    flex: 1,
-    backgroundColor: Colors.background,
-  },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    height: 60,
-  },
-  backBtn: {
-    width: 40,
-    height: 40,
-    justifyContent: 'center',
-  },
-  backText: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-  headerTitle: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  scrollContent: {
-    padding: 20,
-  },
-  card: {
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 24,
-    padding: 24,
-    marginBottom: 32,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  sectionTitle: {
-    color: Colors.accentPink,
-    fontSize: 14,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    marginBottom: 20,
-    letterSpacing: 1,
-  },
-  largeInput: {
-    backgroundColor: 'rgba(0,0,0,0.3)',
-    borderRadius: 16,
-    paddingHorizontal: 20,
-    paddingVertical: 18,
-    color: '#fff',
-    fontSize: 16,
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.1)',
-  },
-  actionRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginTop: 10,
-  },
-  cancelBtn: {
-    flex: 1,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    borderRadius: 16,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  cancelBtnText: {
-    color: '#fff',
-    fontWeight: '700',
-  },
-  primaryBtn: {
-    flex: 2,
-    borderRadius: 16,
-    overflow: 'hidden',
-  },
-  btnGradient: {
-    paddingVertical: 18,
-    alignItems: 'center',
-  },
-  primaryBtnText: {
-    color: '#fff',
-    fontWeight: '800',
-    fontSize: 16,
-  },
-  listLabel: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 12,
-    fontWeight: '800',
-    textTransform: 'uppercase',
-    marginBottom: 16,
-    marginLeft: 4,
-  },
-  sourceCard: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    borderRadius: 20,
-    padding: 20,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
-  },
-  sourceInfo: {
-    flex: 1,
-    marginRight: 10,
-  },
-  sourceName: {
-    color: '#fff',
-    fontSize: 18,
-    fontWeight: '700',
-  },
-  sourceUrl: {
-    color: 'rgba(255,255,255,0.4)',
-    fontSize: 14,
-    marginTop: 4,
-  },
-  sourceActions: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  editBtn: {
-    width: 48,
-    height: 48,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  deleteBtn: {
-    width: 48,
-    height: 48,
-    backgroundColor: 'rgba(239, 68, 68, 0.1)',
-    borderRadius: 12,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  btnIcon: {
-    fontSize: 20,
-  },
-  emptyState: {
-    alignItems: 'center',
-    paddingVertical: 60,
-  },
-  emptyText: {
-    color: 'rgba(255,255,255,0.2)',
-    fontSize: 16,
-  }
+  screen: { flex: 1, backgroundColor: '#0A0A0F' },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, height: 56 },
+  backBtn: { width: 40, height: 40, justifyContent: 'center' },
+  headerTitle: { color: '#fff', fontSize: 17, fontWeight: '700', letterSpacing: 0.5 },
+  scrollContent: { padding: 16 },
+  addCard: { backgroundColor: '#12121A', borderRadius: 16, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: '#1F1F2B' },
+  inputRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+  input: { backgroundColor: '#050508', borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, color: '#fff', fontSize: 14, borderWidth: 1, borderColor: '#2A2A36' },
+  addBtn: { borderRadius: 10, overflow: 'hidden' },
+  addGradient: { paddingVertical: 12, alignItems: 'center' },
+  addBtnText: { color: '#fff', fontWeight: '800', fontSize: 13, letterSpacing: 1 },
+  label: { color: '#666', fontSize: 11, fontWeight: '800', marginBottom: 12, letterSpacing: 1.5, marginLeft: 4 },
+  sourceItem: { backgroundColor: '#12121A', borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#1F1F2B' },
+  sourceMain: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
+  sourceText: { flex: 1, marginRight: 12 },
+  sourceName: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  sourceUrl: { color: '#666', fontSize: 13, marginTop: 2 },
+  sourceFooter: { flexDirection: 'row', alignItems: 'center', borderTopWidth: 1, borderTopColor: '#1F1F2B', paddingTop: 10, gap: 16 },
+  toolBtn: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  toolText: { color: '#aaa', fontSize: 13, fontWeight: '600' },
+  confirmBtn: { backgroundColor: '#ff4444', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  cancelAdd: { marginTop: 10, alignItems: 'center' },
+  cancelAddText: { color: '#666', fontSize: 12, fontWeight: '700', textTransform: 'uppercase' },
+  dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: '#1F1F2B' },
+  empty: { color: '#444', textAlign: 'center', marginTop: 40, fontSize: 15 },
 });
 
 export default SourceManagerScreen;

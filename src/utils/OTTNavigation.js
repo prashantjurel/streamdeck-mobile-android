@@ -1,4 +1,5 @@
 import {Linking} from 'react-native';
+import { getCurrentUser } from '../services/auth';
 
 /**
  * Central registry for all OTT providers supported in the app.
@@ -20,29 +21,110 @@ export const OTT_PROVIDER_MAP = {
 };
 
 /**
- * Core navigation logic for all OTT provider selections.
- * 1. Checks if the native app is installed via Deep Link Scheme.
- * 2. Redirects to the native app if available.
- * 3. Falls back to in-app WebView ONLY if the app is missing.
+ * Build the embed URL for a given engine provider.
+ * Uses the correct API docs for each provider.
  */
-export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, movieboxDomain, navigation) => {
+const buildEngineUrl = (engineId, tmdbId, mediaType, s = 1, e = 1, resumeTime = 0) => {
+  const t = Math.floor(resumeTime);
+  const commonCineParams = `autoplay=true&autoskip=true&back=close&color=%238b5cf6&t=${t}&events=true`;
+  const commonVidParams = `autoPlay=true&nextEpisode=true&episodeSelector=true&color=8b5cf6&progress=${t}`;
+
+  switch (engineId) {
+    case 'cinesrc':
+      if (mediaType === 'movie') {
+        return `https://cinesrc.st/embed/movie/${tmdbId}?${commonCineParams}`;
+      }
+      return `https://cinesrc.st/embed/tv/${tmdbId}?s=${s}&e=${e}&${commonCineParams}`;
+    
+    case 'vidking':
+      if (mediaType === 'movie') {
+        return `https://vidking.net/embed/movie/${tmdbId}?${commonVidParams}`;
+      }
+      return `https://vidking.net/embed/tv/${tmdbId}/${s}/${e}?${commonVidParams}`;
+    
+    default:
+      return null;
+  }
+};
+
+/**
+ * Intelligent Availability Check for Direct Engines.
+ * Checks CineSrc -> VidKing -> RiveStream in priority order.
+ * Returns the first available provider with its embed URL.
+ */
+export const checkDirectEngineAvailability = (tmdbId, mediaType, s = 1, e = 1, resumeTime = 0) => {
+  return new Promise(async (resolve) => {
+    const { loadSettings } = require('./storage');
+    const settings = await loadSettings();
+    const priority = settings.directEnginePriority || ['cinesrc', 'vidking'];
+    
+    const engineMap = {
+      'cinesrc': { id: 'cinesrc', name: 'CineSrc' },
+      'vidking': { id: 'vidking', name: 'VidKing' },
+    };
+
+    const providers = priority.map(id => engineMap[id]).filter(Boolean);
+
+    for (const p of providers) {
+      try {
+        const url = buildEngineUrl(p.id, tmdbId, mediaType, s, e, resumeTime);
+        if (!url) continue;
+
+        const isAvailable = await new Promise((resResolve) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('GET', url, true); 
+          xhr.timeout = 4000;
+          
+          xhr.onreadystatechange = () => {
+            if (xhr.readyState === 2) { 
+              if (xhr.status >= 200 && xhr.status < 400) {
+                xhr.abort();
+                resResolve(true);
+              } else {
+                xhr.abort();
+                resResolve(false);
+              }
+            }
+          };
+
+          xhr.onerror = () => resResolve(false);
+          xhr.ontimeout = () => resResolve(false);
+          xhr.send();
+        });
+
+        if (isAvailable) {
+          // Re-build with resumeTime just to be sure
+          const finalUrl = buildEngineUrl(p.id, tmdbId, mediaType, s, e, resumeTime);
+          console.log(`[DirectEngine] ✓ Found content on ${p.name}`);
+          resolve({ url: finalUrl, id: p.id, name: p.name });
+          return;
+        } else {
+          console.log(`[DirectEngine] ✗ ${p.name} check failed`);
+        }
+      } catch (err) {
+        console.log(`[DirectEngine] ✗ ${p.name} check exception: ${err.message}`);
+      }
+    }
+    resolve(null);
+  });
+};
+
+/**
+ * Core navigation logic for all OTT provider selections.
+ */
+export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, movieboxDomain, navigation, s = 1, e = 1, resumeTime = 0, thumb = null, showName = null) => {
   const query = encodeURIComponent(movieTitle);
   
   // 1. Try Native App Deep Link first
-  if (provider.appScheme) {
+  if (provider.appScheme && provider.id !== 'direct') {
     try {
       const schemes = Array.isArray(provider.appScheme) ? provider.appScheme : [provider.appScheme];
-      
       for (const scheme of schemes) {
-        // For some apps we append the query, for others just the base scheme
-        const schemeUrl = scheme.includes('?') || scheme.includes('/') 
-          ? `${scheme}${query}` 
-          : scheme;
-          
+        const schemeUrl = scheme.includes('?') || scheme.includes('/') ? `${scheme}${query}` : scheme;
         const canOpen = await Linking.canOpenURL(schemeUrl);
         if (canOpen) {
           await Linking.openURL(schemeUrl);
-          return true; // Successfully opened in-app
+          return true;
         }
       }
     } catch (e) {
@@ -50,55 +132,82 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
     }
   }
 
-  // 2. Build Web Fallback URL
   let finalUrl;
-  if (provider.searchUrl) {
-    finalUrl = `${provider.searchUrl}${query}`;
-    
-    if (provider.id?.startsWith('moviebox') && movieboxDomain && tmdbId && mediaType) {
-      // Clean domain: extract root domain only (remove protocol, paths, slashes)
-      let domain = movieboxDomain.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase().trim();
-      
-      // Cineby specific fix: ensure www if missing (some sites redirect poorly without it)
-      if (domain.includes('cineby') && !domain.startsWith('www.')) {
-        domain = `www.${domain}`;
-      }
+  let finalId = provider.id;
+  let finalName = provider.name;
+  let engineSource = null; 
 
-      const knownDirectDomains = ['cineby', 'bitcine', 'moviebox', 'rivestream', 'sflix', 'vidsrc', 'embed', '2embed'];
-      const isKnownDirect = knownDirectDomains.some(d => domain.includes(d));
-
-      if (isKnownDirect) {
-        if (domain.includes('rivestream')) {
-          finalUrl = `https://${domain}/watch?type=${mediaType}&id=${tmdbId}`;
-        } else {
-          finalUrl = `https://${domain}/${mediaType}/${tmdbId}`;
-        }
+  // Case A: Unified Direct Engine (StreamDeck Engine)
+  if (provider.id === 'direct') {
+    if (tmdbId && mediaType) {
+      const resolved = await checkDirectEngineAvailability(tmdbId, mediaType, s, e, resumeTime);
+      if (resolved) {
+        finalUrl = resolved.url;
+        finalId = 'direct'; 
+        finalName = `StreamDeck Engine`;
+        engineSource = resolved.id; 
       } else {
-        // Return unverified status so the component can show a themed modal
-        const domainOnly = domain.split('/')[0];
-        return {
-          status: 'unverified',
-          domain: domainOnly,
-          homepageUrl: `https://${domainOnly}`,
-          movieTitle: movieTitle
+        return { 
+          status: 'unavailable', 
+          message: 'This title is not available on StreamDeck Engine. Please try other streaming sources.' 
         };
       }
     }
-  } else if (provider.url) {
+  }
+
+  // Case B: MovieBox Custom Domains
+  if (!finalUrl && provider.id?.startsWith('moviebox') && movieboxDomain && tmdbId && mediaType) {
+    let domain = movieboxDomain.replace(/^https?:\/\//i, '').split('/')[0].toLowerCase().trim();
+    if (domain.includes('cineby') && !domain.startsWith('www.')) domain = `www.${domain}`;
+    
+    if (mediaType === 'movie') {
+      finalUrl = `https://vidsrc.pro/embed/movie/${tmdbId}`;
+    } else {
+      finalUrl = `https://vidsrc.pro/embed/tv/${tmdbId}/${s}/${e}`;
+    }
+    finalName = provider.name;
+  }
+
+  // Case C: Search-URL based Fallback
+  if (!finalUrl && provider.searchUrl) {
+    finalUrl = `${provider.searchUrl}${query}`;
+  } 
+
+  // Case D: Direct Static URL
+  if (!finalUrl && provider.url) {
     finalUrl = provider.url.trim();
     if (!/^https?:\/\//i.test(finalUrl)) finalUrl = `https://${finalUrl}`;
-  } else {
-    return false; // Nowhere to go
+  }
+
+  if (!finalUrl) {
+    console.warn('[OTTNav] No final URL resolved for', provider.name);
+    return false;
   }
 
   // 3. Navigate to in-app WebView
-  navigation.navigate('WebView', {
-    url: finalUrl,
-    title: `${movieTitle} on ${provider.name}`,
-    appId: provider.id,
-    color: provider.color || '#333',
-    type: provider.id === 'moviebox' ? 'moviebox' : (provider.id.startsWith('custom') || provider.id === 'hotstar' || provider.id === 'fancode' || provider.id === 'sonyliv' ? 'sports' : 'movie'),
-  });
+  try {
+    const isEngineType = finalId === 'direct';
+    const user = getCurrentUser();
+    
+    navigation.navigate('WebView', {
+      url: finalUrl,
+      title: movieTitle,
+      showName: showName || (mediaType === 'tv' ? movieTitle : null),
+      tmdbId,
+      mediaType,
+      season: s,
+      episode: e,
+      resumeTime,
+      thumb,
+      userId: user?.uid,
+      appId: finalId,
+      color: provider.color || '#8b5cf6',
+      type: isEngineType ? 'direct_engine' : (finalId.startsWith('moviebox') ? 'moviebox' : 'movie'),
+      engineSource: engineSource,
+    });
+  } catch (e) {
+    console.error('[OTTNav] Navigation failed:', e);
+  }
   
-  return false; // Opened in WebView
+  return false; 
 };

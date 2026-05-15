@@ -708,7 +708,7 @@ const styles = StyleSheet.create({
     color: '#fff',
     letterSpacing: 0.1,
   },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalOverlay: { flex: 1, backgroundColor: 'transparent', justifyContent: 'flex-end' },
   modalContent: {
     backgroundColor: '#12121A',
     borderTopLeftRadius: 30,
@@ -744,7 +744,7 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(255,255,255,0.04)',
     borderRadius: 18,
   },
-  closeModalText: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.4)' },
+  closeModalText: { fontSize: 16, fontWeight: '700', color: 'rgba(255,255,255,0.7)' },
   headerPillAction: {
     flexDirection: 'row',
     alignItems: 'center',

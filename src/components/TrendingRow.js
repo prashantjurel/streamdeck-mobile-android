@@ -35,7 +35,7 @@ const SkeletonPoster = () => {
   );
 };
 
-const TrendingRow = ({title, subtitle, movies = [], isLoading = false, onMoviePress, style, onTitlePress, showChevron}) => {
+const TrendingRow = ({title, subtitle, movies = [], isLoading = false, onMoviePress, style, onTitlePress, showChevron, titleExtra}) => {
   const [filter, setFilter] = useState('movie');
 
   const filteredMovies = (movies || []).filter(m => {
@@ -98,6 +98,7 @@ const TrendingRow = ({title, subtitle, movies = [], isLoading = false, onMoviePr
         subtitle={subtitle} 
         onPress={onTitlePress}
         showChevron={showChevron}
+        titleExtra={titleExtra}
         rightAction={renderToggle()}
       />
       

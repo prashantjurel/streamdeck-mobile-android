@@ -14,6 +14,8 @@ import {
   ActivityIndicator,
   Modal,
   Linking,
+  ToastAndroid,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Colors, FontSizes, Spacing, BorderRadius } from '../theme/colors';
@@ -24,17 +26,22 @@ import {
   fetchTopRated, 
   fetchTopRatedTV,
   getImageUrl, 
-  fetchWatchProviders 
+  fetchWatchProviders,
+  fetchTVDetails,
+  fetchTVSeasonDetails
 } from '../services/tmdb';
-import { loadSettings } from '../utils/storage';
+import { loadSettings, isDirectEngineEnabled, loadContinueWatching } from '../utils/storage';
 import SectionHeader from '../components/SectionHeader';
 import PosterCard from '../components/PosterCard';
 import TrendingRow from '../components/TrendingRow';
 import LinearGradient from 'react-native-linear-gradient';
 import { useApi } from '../context/ApiContext';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
+import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
+import SeriesPickerModal from '../components/SeriesPickerModal';
+import MediaProviderModal from '../components/MediaProviderModal';
 
 
 
@@ -53,7 +60,14 @@ const ExploreScreen = ({ navigation, route }) => {
   const [availableProviders, setAvailableProviders] = useState([]);
   const [showPicker, setShowPicker] = useState(false);
   const [checkingAvailability, setCheckingAvailability] = useState(false);
+  const [showSeriesPicker, setShowSeriesPicker] = useState(false);
+  const [selectedQuickItem, setSelectedQuickItem] = useState(null);
+  const [continueWatching, setContinueWatching] = useState([]);
+
+  // Tab bar visibility is managed globally or via padding to prevent layout jumps
   const [movieboxDomain, setMovieboxDomain] = useState('moviebox.mov');
+  const [movieboxSources, setMovieboxSources] = useState([]);
+  const [directEngineEnabled, setDirectEngineEnabled] = useState(true);
 
   const topPadding = insets.top || StatusBar.currentHeight || 0;
 
@@ -61,10 +75,10 @@ const ExploreScreen = ({ navigation, route }) => {
 
   useFocusEffect(
     useCallback(() => {
-      if (!hasKey) {
+      if (!hasKey && requestKey) {
         requestKey();
       }
-    }, [hasKey])
+    }, [hasKey, requestKey])
   );
 
   useEffect(() => {
@@ -79,6 +93,13 @@ const ExploreScreen = ({ navigation, route }) => {
     if (settings.movieboxDomain) {
       setMovieboxDomain(settings.movieboxDomain);
     }
+    setMovieboxSources(settings.movieboxSources || []);
+    const engineEnabled = await isDirectEngineEnabled();
+    setDirectEngineEnabled(engineEnabled);
+    
+    // Load continue watching for the SeriesPickerModal
+    const cwItems = await loadContinueWatching();
+    setContinueWatching(cwItems || []);
   };
 
   useEffect(() => {
@@ -100,7 +121,7 @@ const ExploreScreen = ({ navigation, route }) => {
       setNowPlaying([...npMovies, ...npTv]);
       setTopRated([...trMovies, ...trTv]);
     } catch (e) {
-      if (e.message === 'INVALID_API_KEY') invalidateKey();
+      if (e.message === 'INVALID_API_KEY' && invalidateKey) invalidateKey();
       console.error('[Explore] Load error:', e);
     } finally {
       setLoading(false);
@@ -117,7 +138,7 @@ const ExploreScreen = ({ navigation, route }) => {
       const results = await searchTMDB(query);
       setSearchResults(results);
     } catch (e) {
-      if (e.message === 'INVALID_API_KEY') invalidateKey();
+      if (e.message === 'INVALID_API_KEY' && invalidateKey) invalidateKey();
       console.error('[Explore] Search failed:', e);
     } finally {
       setSearching(false);
@@ -131,13 +152,67 @@ const ExploreScreen = ({ navigation, route }) => {
     return () => clearTimeout(timer);
   }, [searchQuery, handleSearch]);
 
-  const handleMoviePress = async movie => {
-    console.log('[Explore] handleMoviePress called!', movie?.title || movie?.name);
+  const handleMoviePress = async (movie) => {
+    if (!movie) return;
+    const title = movie.title || movie.name || 'Movie';
+    const mediaType = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
+    const tmdbId = movie.id;
+
+    console.log(`[Explore] handleMoviePress triggered: ${title} (${mediaType}:${tmdbId})`);
+    
     setSelectedMovie(movie);
+    setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movie.poster_path });
+
+    if (mediaType === 'tv') {
+      setShowSeriesPicker(true);
+      return;
+    }
+
     setCheckingAvailability(true);
-    setShowPicker(true);
-    console.log('[Explore] showPicker set to true');
-    setAvailableProviders([]);
+    
+    // 1. Prepare Initial Providers (Direct Engine + MovieBox + YouTube)
+    const initialProviders = [];
+    if (directEngineEnabled) {
+      initialProviders.push({
+        id: 'direct',
+        name: 'StreamDeck Engine',
+        icon: 'movie-open-play',
+        color: Colors.accentPurple,
+        logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
+        searchUrl: null,
+      });
+    }
+
+    // Add MovieBox Sources
+    (movieboxSources || []).filter(s => s.enabled).forEach((s, idx) => {
+      const mbDomain = s.url.trim();
+      const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+      initialProviders.push({
+        id: `moviebox_${idx}`,
+        name: s.name || mbSearchDomain,
+        icon: 'movie-open-play',
+        color: '#8b5cf6',
+        logoUrl: null,
+        searchUrl: `https://${mbSearchDomain}/search?q=`,
+        customDomain: mbDomain,
+      });
+    });
+
+    initialProviders.push({
+      id: 'youtube',
+      name: 'YouTube',
+      icon: 'youtube',
+      color: '#FF0000',
+      logoUrl: null,
+      searchUrl: 'https://www.youtube.com/results?search_query=',
+    });
+
+    setAvailableProviders(initialProviders);
+    
+    // 2. Open Modal with a slight delay for stability
+    setTimeout(() => {
+      setShowPicker(true);
+    }, 50);
 
     try {
       const mediaType = movie.media_type || (movie.title ? 'movie' : 'tv');
@@ -165,8 +240,6 @@ const ExploreScreen = ({ navigation, route }) => {
       }
 
       // Always Add Enabled MovieBox Sources as Primary Hubs
-      const settings = await loadSettings();
-      const movieboxSources = settings.movieboxSources || [];
 
       (movieboxSources || [])
         .filter(s => s.enabled)
@@ -213,6 +286,18 @@ const ExploreScreen = ({ navigation, route }) => {
         searchUrl: 'https://www.youtube.com/results?search_query='
       });
 
+      // Add StreamDeck Direct Engine as the first option
+      if (directEngineEnabled) {
+        found.unshift({
+          id: 'direct',
+          name: 'StreamDeck Engine',
+          icon: 'movie-open-play',
+          color: Colors.accentPurple,
+          logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
+          searchUrl: null,
+        });
+      }
+
       setAvailableProviders(found);
     } catch (e) {
       console.error('[Explore] Availability check failed:', e);
@@ -228,14 +313,36 @@ const ExploreScreen = ({ navigation, route }) => {
 
     setShowPicker(false);
 
-    await navigateToOTT(
+    const result = await navigateToOTT(
       provider,
       title,
       tmdbId,
       mediaType,
-      movieboxDomain,
+      provider.customDomain,
       navigation
     );
+
+    // Handle unavailable from Direct Engine
+    if (result && result.status === 'unavailable') {
+      setShowPicker(true); // Re-open modal for user to pick another source
+    }
+  };
+
+  const handleSelectEpisode = (episode, season) => {
+    setShowSeriesPicker(false);
+    
+    const updatedItem = {
+      ...selectedQuickItem,
+      episode: episode.episode_number,
+      season: season.season_number,
+      episodeTitle: episode.name,
+      thumb: episode.still_path || selectedQuickItem.thumb
+    };
+    setSelectedQuickItem(updatedItem);
+    setSelectedMovie({ ...selectedMovie, ...updatedItem });
+    
+    setCheckingAvailability(true);
+    setShowPicker(true);
   };
 
   const renderSearchResult = ({ item }) => {
@@ -320,11 +427,11 @@ const ExploreScreen = ({ navigation, route }) => {
         </TouchableOpacity>
 
         <View style={styles.searchBar}>
-          <Text style={styles.searchIcon}>🔍</Text>
+          <Ionicons name="search-outline" size={18} color={Colors.textMuted} style={{ marginLeft: 4 }} />
           <TextInput
             style={styles.searchInput}
             placeholder="Search movies, shows, series..."
-            placeholderTextColor={Colors.textMuted}
+            placeholderTextColor="rgba(255,255,255,0.3)"
             value={searchQuery}
             onChangeText={setSearchQuery}
             autoCorrect={false}
@@ -332,7 +439,7 @@ const ExploreScreen = ({ navigation, route }) => {
           />
           {searchQuery.length > 0 && (
             <TouchableOpacity onPress={() => { setSearchQuery(''); setSearchResults([]); }}>
-              <Text style={styles.clearIcon}>✕</Text>
+              <Ionicons name="close-circle" size={18} color={Colors.textMuted} />
             </TouchableOpacity>
           )}
         </View>
@@ -353,8 +460,8 @@ const ExploreScreen = ({ navigation, route }) => {
             />
           ) : (
             <View style={styles.emptyState}>
-              <Text style={styles.emptyIcon}>🔍</Text>
-              <Text style={styles.emptyText}>No results found</Text>
+              <Ionicons name="search-outline" size={64} color="rgba(255,255,255,0.05)" />
+              <Text style={styles.emptyText}>No results found for "{searchQuery}"</Text>
             </View>
           )}
         </View>
@@ -415,68 +522,35 @@ const ExploreScreen = ({ navigation, route }) => {
         </ScrollView>
       )}
 
-      {/* Smart Provider Selection Modal — fade animation */}
-      <Modal
+      {/* Shared Series & Episode Picker */}
+      <SeriesPickerModal
+        visible={showSeriesPicker}
+        item={selectedQuickItem}
+        continueWatching={continueWatching}
+        onClose={() => setShowSeriesPicker(false)}
+        onSelectEpisode={handleSelectEpisode}
+      />
+
+      {/* Shared Provider Picker Overlay */}
+      <MediaProviderModal
         visible={showPicker}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowPicker(false)}>
-        <View style={styles.modalOverlay}>
-          <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
-          <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <View style={styles.modalHandle} />
-              <Text style={styles.modalTitle}>Available On</Text>
-              {checkingAvailability ? (
-                <ActivityIndicator size="small" color={Colors.accentPurple} style={{ marginTop: 10 }} />
-              ) : (
-                <Text style={styles.modalSubtitle}>Streaming now in India</Text>
-              )}
-            </View>
-
-            <View style={styles.providerGrid}>
-              {checkingAvailability ? (
-                <View style={styles.modalLoading}>
-                  <ActivityIndicator size="small" color={Colors.accentPurple} />
-                  <Text style={styles.modalLoadingText}>Curating streams...</Text>
-                </View>
-              ) : (
-                availableProviders.map(provider => (
-                  <TouchableOpacity
-                    key={provider.id}
-                    style={styles.providerItem}
-                    onPress={() => handleSelectProvider(provider)}
-                    activeOpacity={0.7}
-                  >
-                    <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color }]}>
-                      {provider.logoUrl ? (
-                        <Image
-                          source={{ uri: provider.logoUrl }}
-                          style={styles.providerLogo}
-                          resizeMode="contain"
-                        />
-                      ) : (
-                        <Icon name={provider.icon} size={32} color="#fff" />
-                      )}
-                    </View>
-                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
-                  </TouchableOpacity>
-                ))
-              )}
-            </View>
-
-            <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
-              <Text style={styles.closeModalText}>Cancel</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
+        providers={availableProviders}
+        isFetching={checkingAvailability}
+        onClose={() => setShowPicker(false)}
+        onSelectProvider={handleSelectProvider}
+      />
     </View>
   );
 };
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.bgPrimary },
+  customOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'transparent',
+    justifyContent: 'flex-end',
+    zIndex: 9999,
+  },
   searchContainer: { 
     flexDirection: 'row',
     alignItems: 'center',
@@ -496,17 +570,21 @@ const styles = StyleSheet.create({
     flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 255, 255, 0.08)',
-    borderRadius: BorderRadius.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderRadius: 14,
     borderWidth: 1,
-    borderColor: Colors.borderSubtle,
-    paddingHorizontal: Spacing.lg,
-    height: 52,
-    gap: Spacing.md,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    paddingHorizontal: 12,
+    height: 48,
+    gap: 8,
   },
-  searchIcon: { fontSize: 16 },
-  searchInput: { flex: 1, color: Colors.textPrimary, fontSize: FontSizes.md },
-  clearIcon: { color: Colors.textMuted, fontSize: 16, padding: 4 },
+  searchInput: { 
+    flex: 1, 
+    color: '#fff', 
+    fontSize: 15,
+    fontWeight: '500',
+    paddingVertical: 0,
+  },
   resultsContainer: { flex: 1 },
   searchSpinner: { marginTop: 60 },
   resultsList: { paddingHorizontal: Spacing.xl, paddingBottom: 150 },
@@ -561,18 +639,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   modalContent: {
-    backgroundColor: '#16161E',
-    borderTopLeftRadius: 28,
-    borderTopRightRadius: 28,
-    paddingHorizontal: Spacing.xl,
-    paddingTop: Spacing.md,
-    paddingBottom: 44,
+    backgroundColor: '#111118',
+    borderTopLeftRadius: 32,
+    borderTopRightRadius: 32,
+    paddingHorizontal: 24,
+    paddingTop: 12,
+    paddingBottom: 32,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.08)',
     elevation: 24,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: -8 },
-    shadowOpacity: 0.4,
+    shadowOffset: { width: 0, height: -10 },
+    shadowOpacity: 0.5,
     shadowRadius: 20,
   },
   modalHeader: {
@@ -580,11 +658,12 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.xl,
   },
   modalHandle: {
-    width: 36,
+    width: 40,
     height: 4,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+    backgroundColor: Colors.accentPurple,
     borderRadius: 2,
     marginBottom: 20,
+    opacity: 0.8,
   },
   modalTitle: {
     fontSize: 22,
@@ -672,7 +751,205 @@ const styles = StyleSheet.create({
   closeModalText: {
     fontSize: 15,
     fontWeight: '700',
+    color: 'rgba(255,255,255,0.7)',
+  },
+  providerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderRadius: 16,
+    padding: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+  },
+  providerRowIconBox: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 16,
+    overflow: 'hidden',
+  },
+  providerRowLogo: {
+    width: 32,
+    height: 32,
+    borderRadius: 6,
+  },
+  providerRowInfo: {
+    flex: 1,
+  },
+  providerRowName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  providerRowStatus: {
+    fontSize: 11,
     color: 'rgba(255,255,255,0.35)',
+    fontWeight: '600',
+  },
+  providerCategory: {
+    marginBottom: 20,
+  },
+  providerCategoryTitle: {
+    fontSize: 10,
+    fontWeight: '900',
+    color: 'rgba(255,255,255,0.3)',
+    letterSpacing: 1.5,
+    marginBottom: 10,
+    marginLeft: 4,
+    textTransform: 'uppercase',
+  },
+  providerRowTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  qualityBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    backgroundColor: 'rgba(157, 78, 221, 0.15)',
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(157, 78, 221, 0.3)',
+  },
+  qualityBadgeText: {
+    color: Colors.accentPurple,
+    fontSize: 8,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  providerRowGlow: {
+    backgroundColor: 'rgba(157, 78, 221, 0.06)',
+    borderColor: 'rgba(157, 78, 221, 0.15)',
+  },
+  // Episode Picker Styles
+  episodeControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    gap: 10,
+    marginBottom: 20,
+  },
+  seasonSelector: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: 12,
+    gap: 6,
+  },
+  seasonSelectorText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  episodeSearchBox: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    paddingHorizontal: 12,
+    borderRadius: 12,
+    height: 40,
+    gap: 8,
+  },
+  episodeSearchInput: {
+    flex: 1,
+    color: '#fff',
+    fontSize: 13,
+    paddingVertical: 0,
+  },
+  sortToggle: {
+    width: 40,
+    height: 40,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  episodeCard: {
+    flexDirection: 'row',
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderRadius: 16,
+    padding: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+  },
+  epThumbContainer: {
+    width: 100,
+    height: 60,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginRight: 12,
+  },
+  epThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  epBadge: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  epBadgeText: {
+    color: '#fff',
+    fontSize: 9,
+    fontWeight: '800',
+  },
+  epInfo: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  epTitle: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#fff',
+    marginBottom: 2,
+  },
+  epMetaRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  epMeta: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.4)',
+    fontWeight: '600',
+  },
+  epOverview: {
+    fontSize: 11,
+    color: 'rgba(255,255,255,0.3)',
+    lineHeight: 15,
+  },
+  episodeCardActive: {
+    backgroundColor: 'rgba(157, 78, 221, 0.05)',
+    borderColor: 'rgba(157, 78, 221, 0.2)',
+    borderWidth: 1.5,
+  },
+  nowWatchingBadge: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    backgroundColor: Colors.accentPurple,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  nowWatchingText: {
+    color: '#fff',
+    fontSize: 7,
+    fontWeight: '900',
+    letterSpacing: 0.5,
   },
 });
 

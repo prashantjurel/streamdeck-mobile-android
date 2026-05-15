@@ -4,7 +4,7 @@ import {View, Text, StyleSheet, TouchableOpacity} from 'react-native';
 import LinearGradient from 'react-native-linear-gradient';
 import {Colors, FontSizes, Spacing} from '../theme/colors';
 
-const SectionHeader = ({title, subtitle, style, rightAction, onPress, showChevron}) => {
+const SectionHeader = ({title, subtitle, style, rightAction, onPress, showChevron, titleExtra}) => {
   return (
     <View style={[styles.container, style]}>
       <View style={styles.titleRow}>
@@ -26,6 +26,7 @@ const SectionHeader = ({title, subtitle, style, rightAction, onPress, showChevro
               ˅
             </Text>
           )}
+          {titleExtra && <View style={{marginLeft: 8}}>{titleExtra}</View>}
         </TouchableOpacity>
         {rightAction && <View style={styles.rightAction}>{rightAction}</View>}
       </View>

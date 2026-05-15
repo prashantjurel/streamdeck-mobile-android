@@ -18,7 +18,7 @@ import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {useFocusEffect} from '@react-navigation/native';
 import {fetchMovieRecommendations, MOVIE_GENRES} from '../services/movieAdventure';
 import {fetchWatchProviders} from '../services/tmdb';
-import {loadSettings} from '../utils/storage';
+import {loadSettings, isDirectEngineEnabled} from '../utils/storage';
 import AdventureStack from '../components/AdventureStack';
 import LinearGradient from 'react-native-linear-gradient';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
@@ -41,10 +41,30 @@ const AdventureScreen = ({navigation, route}) => {
   const [prefs, setPrefs] = useState(null);
   const [page, setPage] = useState(1);
   const [showPicker, setShowPicker] = useState(false);
+
+  // Sync tab bar visibility with overlays
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: showPicker
+        ? { display: 'none' } 
+        : { 
+            backgroundColor: '#0D0D12', 
+            borderTopWidth: 0, 
+            height: 65, 
+            position: 'absolute', 
+            bottom: 0, 
+            left: 0, 
+            right: 0, 
+            elevation: 8 
+          }
+    });
+  }, [showPicker, navigation]);
   const [isFetchingProviders, setIsFetchingProviders] = useState(false);
   const [availableProviders, setAvailableProviders] = useState([]);
   const [selectedMovie, setSelectedMovie] = useState(null);
-  const [movieboxDomain, setMovieboxDomain] = useState('moviebox.pro'); // Re-added for global fallback stability
+  const [movieboxDomain, setMovieboxDomain] = useState('moviebox.pro'); 
+  const [movieboxSources, setMovieboxSources] = useState([]);
+  const [directEngineEnabled, setDirectEngineEnabled] = useState(true);
 
   // Refs
   const stackRef = useRef(null);
@@ -91,14 +111,15 @@ const AdventureScreen = ({navigation, route}) => {
       // 1. ABSOLUTE PRIORITY: Check AsyncStorage first.
       const saved = await AsyncStorage.getItem('streamdeck_adventure_prefs');
       
-      // Load global settings (like moviebox domain)
-      const settingsRaw = await AsyncStorage.getItem('streamdeck_settings');
-      if (settingsRaw) {
-        const settings = JSON.parse(settingsRaw);
-        if (settings.movieboxDomain) {
-          setMovieboxDomain(settings.movieboxDomain);
-        }
+      // Load global settings (like moviebox domain and sources)
+      const settings = await loadSettings();
+      if (settings.movieboxDomain) {
+        setMovieboxDomain(settings.movieboxDomain);
       }
+      setMovieboxSources(settings.movieboxSources || []);
+
+      const engineEnabled = await isDirectEngineEnabled();
+      setDirectEngineEnabled(engineEnabled);
       
       if (!saved) {
         // If prefs were deleted (Reset), clear local state and redirect IMMEDIATELY
@@ -208,8 +229,51 @@ const AdventureScreen = ({navigation, route}) => {
     setSelectedMovie(card);
     setAvailableProviders([]); // Clear previous
     setIsFetchingProviders(true);
-    setShowPicker(true); // OPEN MODAL IMMEDIATELY for instant feedback
+
+    // 1. Prepare Initial Providers (Direct Engine + MovieBox + YouTube)
+    const initialProviders = [];
+    if (directEngineEnabled) {
+      initialProviders.push({
+        id: 'direct',
+        name: 'StreamDeck Engine',
+        icon: 'movie-open-play',
+        color: Colors.accentPurple,
+        logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
+        searchUrl: null,
+      });
+    }
+
+    // Add MovieBox Sources
+    (movieboxSources || []).filter(s => s.enabled).forEach((s, idx) => {
+      const mbDomain = s.url.trim();
+      const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
+      initialProviders.push({
+        id: `moviebox_${idx}`,
+        name: s.name || mbSearchDomain,
+        icon: 'movie-open-play',
+        color: '#8b5cf6',
+        logoUrl: null,
+        searchUrl: `https://${mbSearchDomain}/search?q=`,
+        customDomain: mbDomain,
+      });
+    });
+
+    initialProviders.push({
+      id: 'youtube',
+      name: 'YouTube',
+      icon: 'youtube',
+      color: '#FF0000',
+      logoUrl: null,
+      searchUrl: 'https://www.youtube.com/results?search_query=',
+    });
+
+    setAvailableProviders(initialProviders);
     
+    // 2. Open Modal with a slight delay for stability
+    setTimeout(() => {
+      setShowPicker(true);
+    }, 50);
+
     try {
       const providersData = await fetchWatchProviders(card.id, 'movie');
       const streamingProviders = [];
@@ -231,8 +295,6 @@ const AdventureScreen = ({navigation, route}) => {
       }
 
       // Always Add Enabled MovieBox Sources as Primary Hubs
-      const settings = await loadSettings();
-      const movieboxSources = settings.movieboxSources || [];
       
       (movieboxSources || [])
         .filter(s => s.enabled)
@@ -280,6 +342,18 @@ const AdventureScreen = ({navigation, route}) => {
         appScheme: 'youtube://',
       });
 
+      // Add StreamDeck Direct Engine as the first option
+      if (directEngineEnabled) {
+        streamingProviders.unshift({
+          id: 'direct',
+          name: 'StreamDeck Engine',
+          icon: 'movie-open-play',
+          color: Colors.accentPurple,
+          logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
+          searchUrl: null,
+        });
+      }
+
       setAvailableProviders(streamingProviders);
     } catch (e) {
       console.error('[Adventure] Failed to fetch providers:', e);
@@ -293,7 +367,7 @@ const AdventureScreen = ({navigation, route}) => {
     const title = selectedMovie?.title || '';
     const tmdbId = selectedMovie?.id;
 
-    await navigateToOTT(
+    const result = await navigateToOTT(
       provider, 
       title, 
       tmdbId, 
@@ -301,6 +375,11 @@ const AdventureScreen = ({navigation, route}) => {
       provider.customDomain || '', 
       navigation
     );
+
+    // Handle unavailable from Direct Engine
+    if (result && result.status === 'unavailable') {
+      setShowPicker(true); // Re-open modal for user to pick another source
+    }
   };
 
   const checkLoadMore = (index) => {
@@ -313,6 +392,8 @@ const AdventureScreen = ({navigation, route}) => {
   return (
     <View style={[styles.screen, { paddingTop: topPadding }]}>
       <StatusBar barStyle="light-content" backgroundColor="transparent" translucent />
+
+      {/* Overlay moved to bottom for better layering */}
       
       {renderHeader()}
 
@@ -388,15 +469,23 @@ const AdventureScreen = ({navigation, route}) => {
           )}
         </View>
       )}
-      <Modal visible={showPicker} transparent animationType="fade" onRequestClose={() => setShowPicker(false)}>
-        <View style={styles.modalOverlay}>
+
+      {/* Smart Provider Selection Overlay */}
+      <Modal
+        visible={showPicker}
+        transparent={true}
+        animationType="slide"
+        onRequestClose={() => setShowPicker(false)}
+      >
+        <View style={styles.customOverlay}>
           <TouchableOpacity style={styles.modalDismissZone} onPress={() => setShowPicker(false)} activeOpacity={1} />
           <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <View style={styles.modalHandle} />
               <Text style={styles.modalTitle}>Available On</Text>
-              <Text style={styles.modalSubtitle}>Select where to stream {selectedMovie?.title}</Text>
+              <Text style={styles.modalSubtitle}>Select where to stream {selectedMovie?.title || selectedMovie?.name}</Text>
             </View>
+
             <View style={styles.providerGrid}>
               {isFetchingProviders ? (
                 <View style={styles.modalLoading}>
@@ -405,19 +494,29 @@ const AdventureScreen = ({navigation, route}) => {
                 </View>
               ) : (
                 availableProviders.map(provider => (
-                  <TouchableOpacity key={provider.id} style={styles.providerItem} onPress={() => handleSelectProvider(provider)} activeOpacity={0.7}>
-                    <View style={[styles.providerIconBox, {backgroundColor: provider.logoUrl ? '#1a1a2e' : provider.color}]}>
+                  <TouchableOpacity
+                    key={provider.id}
+                    style={styles.providerItem}
+                    onPress={() => handleSelectProvider(provider)}
+                    activeOpacity={0.7}
+                  >
+                    <View style={[styles.providerIconBox, { backgroundColor: provider.logoUrl ? 'rgba(255,255,255,0.05)' : provider.color }]}>
                       {provider.logoUrl ? (
-                        <Image source={{uri: provider.logoUrl}} style={styles.providerLogo} resizeMode="contain" />
+                        <Image
+                          source={{ uri: provider.logoUrl }}
+                          style={styles.providerLogo}
+                          resizeMode="contain"
+                        />
                       ) : (
                         <Icon name={provider.icon} size={32} color="#fff" />
                       )}
                     </View>
-                    <Text style={styles.providerName} numberOfLines={1}>{provider.name}</Text>
+                    <Text style={styles.providerName} numberOfLines={2}>{provider.name}</Text>
                   </TouchableOpacity>
                 ))
               )}
             </View>
+
             <TouchableOpacity style={styles.closeModalBtn} onPress={() => setShowPicker(false)} activeOpacity={0.7}>
               <Text style={styles.closeModalText}>Cancel</Text>
             </TouchableOpacity>
@@ -430,6 +529,17 @@ const AdventureScreen = ({navigation, route}) => {
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: Colors.bgPrimary },
+  customOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'transparent',
+    justifyContent: 'flex-end',
+    zIndex: 100000,
+    elevation: 1000,
+  },
   vibeBtn: { 
     borderRadius: 20, 
     overflow: 'hidden',
@@ -573,7 +683,7 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   closeModalBtn: { marginTop: 8, paddingVertical: 14, alignItems: 'center', backgroundColor: 'rgba(255,255,255,0.06)', borderRadius: 16 },
-  closeModalText: { fontSize: 15, fontWeight: '700', color: 'rgba(255,255,255,0.35)' },
+  closeModalText: { fontSize: 15, fontWeight: '700', color: 'rgba(255,255,255,0.7)' },
 });
 
 export default AdventureScreen;

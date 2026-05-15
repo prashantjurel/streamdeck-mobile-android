@@ -1,6 +1,6 @@
 import { getDatabase, ref, get, set, serverTimestamp } from '@react-native-firebase/database';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { loadWatchlist, saveWatchlist, loadSettings, saveSettings } from '../utils/storage';
+import { loadWatchlist, saveWatchlist, loadSettings, saveSettings, loadContinueWatching, saveContinueWatching } from '../utils/storage';
 
 /**
  * Unified Two-Way Sync
@@ -34,6 +34,56 @@ export const syncWithCloud = async (userId) => {
     
     const finalWatchlist = Array.from(mergedWatchlistMap.values());
     await saveWatchlist(finalWatchlist);
+    
+    // 1.1 Continue Watching Sync (Timestamp-based Merge)
+    const localCW = await loadContinueWatching();
+    const cloudCW = cloudData.continueWatching
+      ? (typeof cloudData.continueWatching === 'string' ? JSON.parse(cloudData.continueWatching) : cloudData.continueWatching)
+      : [];
+    
+    const mergedCWMap = new Map();
+    // Merge logic: Newest timestamp wins
+    [...cloudCW, ...localCW].forEach(item => {
+      if (!item || !item.id) return;
+      const existing = mergedCWMap.get(item.id);
+      if (!existing || (item.timestamp || 0) > (existing.timestamp || 0)) {
+        mergedCWMap.set(item.id, item);
+      }
+    });
+    
+    const finalCW = Array.from(mergedCWMap.values())
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)) // Sort newest first
+      .slice(0, 20); // Keep it lean for cloud storage
+      
+    // 1.2 Deletion Sync (Tombstones)
+    const localDeletedRaw = await AsyncStorage.getItem('streamdeck_deleted_cw');
+    const localDeleted = localDeletedRaw ? JSON.parse(localDeletedRaw) : [];
+    const cloudDeleted = cloudData.deletedCW ? (typeof cloudData.deletedCW === 'string' ? JSON.parse(cloudData.deletedCW) : cloudData.deletedCW) : [];
+    
+    // Merge deletions
+    const mergedDeletedMap = new Map();
+    [...cloudDeleted, ...localDeleted].forEach(d => {
+      if (d && d.id) {
+        const existing = mergedDeletedMap.get(d.id);
+        if (!existing || (d.timestamp || 0) > (existing.timestamp || 0)) {
+          mergedDeletedMap.set(d.id, d);
+        }
+      }
+    });
+    const finalDeleted = Array.from(mergedDeletedMap.values()).slice(0, 50);
+    
+    // APPLY DELETIONS: Filter finalCW if a deletion is NEWER than the item's update
+    const cleanedCW = finalCW.filter(item => {
+      const deletion = mergedDeletedMap.get(item.id);
+      if (deletion && deletion.timestamp > (item.timestamp || 0)) {
+        console.log(`[Sync] Filtering out deleted item: ${item.title}`);
+        return false;
+      }
+      return true;
+    });
+
+    await saveContinueWatching(cleanedCW);
+    await AsyncStorage.setItem('streamdeck_deleted_cw', JSON.stringify(finalDeleted));
 
     // 2. Settings Sync (Intelligent Merge)
     const localSettings = await loadSettings();
@@ -48,12 +98,21 @@ export const syncWithCloud = async (userId) => {
     // We prioritize local for the current session, but fill gaps from cloud.
     const mergedSettings = { ...cloudSettings, ...localSettings };
 
-    // 3. Vaporize Ghost Keys & API Keys (Privacy First)
+    // 3. Vaporize Ghost Keys & API Keys (Privacy First) & Migration
     const strippedSettings = {};
     Object.keys(mergedSettings).forEach(key => {
       const lowerKey = key.toLowerCase();
       // Don't sync internal transient state or keys that should be per-device if sensitive
       if (lowerKey.includes('apikey') || lowerKey.includes('tmdb')) return;
+      
+      // MIGRATION: If we see vidkingEnabled, map it to directEngineEnabled and strip it
+      if (key === 'vidkingEnabled') {
+        if (strippedSettings.directEngineEnabled === undefined) {
+          strippedSettings.directEngineEnabled = mergedSettings[key];
+        }
+        return; 
+      }
+
       strippedSettings[key] = mergedSettings[key];
     });
     await saveSettings(strippedSettings);
@@ -72,6 +131,8 @@ export const syncWithCloud = async (userId) => {
     // 5. PUSH THE PERFECT STATE (Use set() to forcefully overwrite entire node)
     const payload = {
       watchlist: finalWatchlist, // Push as native array/object
+      continueWatching: cleanedCW, // Sync your playback history (filtered)
+      deletedCW: finalDeleted, // Sync your deletions too!
       settings: strippedSettings, // Push as native object instead of string
       adventurePrefs: advPrefs || '',
       adventureLang: advLang || 'global',

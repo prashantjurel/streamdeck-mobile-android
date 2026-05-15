@@ -331,6 +331,42 @@ export async function fetchWatchProviders(id, mediaType = 'movie') {
 }
 
 /**
+ * Fetch detailed info for a TV show, including seasons.
+ */
+export async function fetchTVDetails(id) {
+  const apiKey = await getApiKey();
+  if (!apiKey || !id) return null;
+
+  try {
+    const res = await fetch(`${TMDB_BASE}/tv/${id}?api_key=${apiKey}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('[TMDB] fetchTVDetails failed:', e);
+    return null;
+  }
+}
+
+/**
+ * Fetch detailed info for a specific TV season, including episodes.
+ */
+export async function fetchTVSeasonDetails(id, seasonNumber) {
+  const apiKey = await getApiKey();
+  if (!apiKey || !id) return null;
+
+  try {
+    const res = await fetch(`${TMDB_BASE}/tv/${id}/season/${seasonNumber}?api_key=${apiKey}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('[TMDB] fetchTVSeasonDetails failed:', e);
+    return null;
+  }
+}
+
+
+
+/**
  * Get the full backdrop/poster URL.
  */
 export function getImageUrl(path, size = 'w500') {

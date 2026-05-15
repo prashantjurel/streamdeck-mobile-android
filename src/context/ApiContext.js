@@ -2,9 +2,9 @@ import React, { createContext, useState, useEffect, useContext } from 'react';
 import { getApiKey, saveApiKey as storageSaveApiKey } from '../utils/storage';
 import ApiKeySetupModal from '../components/ApiKeySetupModal';
 
-const ApiContext = createContext();
+const ApiContext = createContext({});
 
-export const useApi = () => useContext(ApiContext);
+export const useApi = () => useContext(ApiContext) || {};
 
 export const ApiProvider = ({ children }) => {
   const [hasKey, setHasKey] = useState(false);
