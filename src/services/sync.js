@@ -105,14 +105,6 @@ export const syncWithCloud = async (userId) => {
       // Don't sync internal transient state or keys that should be per-device if sensitive
       if (lowerKey.includes('apikey') || lowerKey.includes('tmdb')) return;
       
-      // MIGRATION: If we see vidkingEnabled, map it to directEngineEnabled and strip it
-      if (key === 'vidkingEnabled') {
-        if (strippedSettings.directEngineEnabled === undefined) {
-          strippedSettings.directEngineEnabled = mergedSettings[key];
-        }
-        return; 
-      }
-
       strippedSettings[key] = mergedSettings[key];
     });
     await saveSettings(strippedSettings);

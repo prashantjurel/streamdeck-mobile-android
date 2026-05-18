@@ -53,7 +53,7 @@ const MediaProviderModal = ({
             <View style={styles.modalHandle} />
             <Text style={styles.modalTitle}>{title}</Text>
             {isFetching ? (
-              <ActivityIndicator size="small" color={Colors.accentPurple} style={{ marginTop: 10 }} />
+              <Text style={styles.modalSubtitle}>Locating providers...</Text>
             ) : (
               <Text style={styles.modalSubtitle}>{subtitle}</Text>
             )}

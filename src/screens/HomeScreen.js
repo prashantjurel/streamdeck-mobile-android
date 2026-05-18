@@ -412,13 +412,17 @@ const HomeScreen = ({ navigation }) => {
         try {
           const matches = await fetchLiveSportsData();
           const preferredLeagues = ['ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'];
-          const livePreferredMatches = matches.filter(m => {
-            if (m.status !== 'LIVE' && m.status !== 'soon') return false;
+          let topLiveMatches = matches.filter(m => {
             const lowerTitle = m.title.toLowerCase();
-            return preferredLeagues.some(league => lowerTitle.includes(league));
+            return (m.status === 'LIVE' || m.status === 'soon') && preferredLeagues.some(league => lowerTitle.includes(league));
           });
+          
+          // Fallback: If no preferred live matches, just show the top 2 overall live/soon/upcoming matches!
+          if (topLiveMatches.length === 0) {
+            topLiveMatches = matches.slice(0, 2);
+          }
 
-          const heroSports = livePreferredMatches.map(match => {
+          const heroSports = topLiveMatches.slice(0, 3).map(match => {
             const lowerTitle = match.title.toLowerCase();
             let backdrop = null;
             if (match.backdrop) {
@@ -664,8 +668,11 @@ const HomeScreen = ({ navigation }) => {
     // 2. Set initial state (OTT will be empty/fetching)
     const movieThumb = movie.backdrop_path 
       ? getImageUrl(movie.backdrop_path) 
-      : (movie.poster_path ? getImageUrl(movie.poster_path) : null);
-    setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movieThumb });
+      : (movie.poster_path ? getImageUrl(movie.poster_path) : movie.thumb);
+      
+    if (!forcedEpisode) {
+      setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movieThumb });
+    }
     setAvailableProviders([...engineProviders, ...movieboxProviders, ...socialProviders]);
 
     // Check for DEFAULT PROVIDER before showing picker
@@ -1031,6 +1038,8 @@ const HomeScreen = ({ navigation }) => {
           movies={globalTrending}
           isLoading={loadingGlobal}
           onMoviePress={handlePlayPress}
+          watchlist={watchlist}
+          onAddToList={handleAddToLibrary}
         />
 
         {/* What's Trending in India / US / etc */}
@@ -1039,6 +1048,8 @@ const HomeScreen = ({ navigation }) => {
           movies={localTrending}
           isLoading={loadingLocal}
           onMoviePress={handlePlayPress}
+          watchlist={watchlist}
+          onAddToList={handleAddToLibrary}
           titleExtra={
             <TouchableOpacity 
               onPress={() => setShowRegionInfo(true)} 
@@ -1059,6 +1070,8 @@ const HomeScreen = ({ navigation }) => {
             movies={providerTrendingCache[activeProvider.id] || []}
             isLoading={loadingProvider}
             onMoviePress={handlePlayPress}
+            watchlist={watchlist}
+            onAddToList={handleAddToLibrary}
             style={{ marginBottom: 0 }}
             titleExtra={
               <TouchableOpacity 

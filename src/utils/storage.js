@@ -68,30 +68,57 @@ export async function addContinueWatchingEntry(metadata) {
     season: season !== undefined ? Number(season) : null,
     episode: episode !== undefined ? Number(episode) : null,
     title: title || 'Unknown',
-    progress: progress || 0,
-    currentTime: currentTime || 0,
-    duration: duration || 0,
     thumb: finalThumb || null,
     appId,
     url,
     timestamp: Date.now(),
   };
 
+  // Only include progress/time fields if they are explicitly provided
+  // This prevents overwriting real progress with 0 when just updating thumbnail
+  if (progress !== undefined && progress !== null) {
+    entry.progress = progress;
+  }
+  if (currentTime !== undefined && currentTime !== null && currentTime > 0) {
+    entry.currentTime = currentTime;
+  }
+  if (duration !== undefined && duration !== null && duration > 0) {
+    entry.duration = duration;
+  }
+
   if (existing >= 0) {
-    // Merge existing metadata if we have it
-    items[existing] = { ...items[existing], ...entry };
+    // Merge: existing fields are kept unless new entry provides a valid replacement
+    const merged = { ...items[existing] };
+    Object.keys(entry).forEach(key => {
+      if (entry[key] !== undefined && entry[key] !== null) {
+        merged[key] = entry[key];
+      }
+    });
+    // Ensure progress is always a number
+    if (typeof merged.progress !== 'number' || isNaN(merged.progress)) {
+      merged.progress = 0.5;
+    }
+    items[existing] = merged;
     // Move to top
     const item = items.splice(existing, 1)[0];
     items.unshift(item);
   } else {
+    // New entry — ensure progress has a default
+    if (typeof entry.progress !== 'number' || isNaN(entry.progress)) {
+      entry.progress = 0.5;
+    }
+    if (!entry.currentTime) entry.currentTime = 0;
+    if (!entry.duration) entry.duration = 0;
     items.unshift(entry);
   }
 
   // PRUNING: Only keep items that are not finished (less than 95% progress)
   // And avoid showing items with negligible progress (less than 0.1%)
-  const activeItems = items.filter(item => item.progress > 0.1 && item.progress < 95);
+  const activeItems = items.filter(item => 
+    typeof item.progress === 'number' && item.progress > 0.1 && item.progress < 95
+  );
 
-  console.log(`[Storage] CW Items updated: ${activeItems.length} items active`);
+  console.log(`[Storage] CW Items updated: ${activeItems.length} items active, latest progress: ${activeItems[0]?.progress?.toFixed(1)}%`);
   await saveContinueWatching(activeItems);
   return activeItems;
 }
@@ -211,18 +238,12 @@ export async function loadSettings() {
       }
     });
 
-    // Alias vidkingEnabled to directEngineEnabled if present for migration
-    if (settings.vidkingEnabled !== undefined && settings.directEngineEnabled === undefined) {
-      settings.directEngineEnabled = settings.vidkingEnabled;
-      delete settings.vidkingEnabled;
-    }
-
     // Default priority for direct engines
     if (!settings.directEnginePriority) {
-      settings.directEnginePriority = ['cinesrc', 'vidking'];
+      settings.directEnginePriority = ['cinesrc'];
     } else {
-      // PURGE: Remove RiveStream from existing lists to avoid ghost entries
-      settings.directEnginePriority = settings.directEnginePriority.filter(id => id !== 'rivestream');
+      // PURGE: Remove RiveStream & VidKing from existing lists to avoid ghost entries
+      settings.directEnginePriority = settings.directEnginePriority.filter(id => id !== 'rivestream' && id !== 'vidking');
     }
 
     return settings;
@@ -253,7 +274,7 @@ export function getDefaultSettings() {
       { name: 'PPV', url: 'www.ppv.to', enabled: false }
     ],
     directEngineEnabled: true,
-    directEnginePriority: ['vidking', 'cinesrc'],
+    directEnginePriority: ['cinesrc'],
     defaultProviderId: null,
   };
 }

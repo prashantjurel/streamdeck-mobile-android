@@ -78,6 +78,7 @@ const ExploreScreen = ({ navigation, route }) => {
       if (!hasKey && requestKey) {
         requestKey();
       }
+      loadDomainSettings();
     }, [hasKey, requestKey])
   );
 
@@ -152,22 +153,7 @@ const ExploreScreen = ({ navigation, route }) => {
     return () => clearTimeout(timer);
   }, [searchQuery, handleSearch]);
 
-  const handleMoviePress = async (movie) => {
-    if (!movie) return;
-    const title = movie.title || movie.name || 'Movie';
-    const mediaType = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
-    const tmdbId = movie.id;
-
-    console.log(`[Explore] handleMoviePress triggered: ${title} (${mediaType}:${tmdbId})`);
-    
-    setSelectedMovie(movie);
-    setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movie.poster_path });
-
-    if (mediaType === 'tv') {
-      setShowSeriesPicker(true);
-      return;
-    }
-
+  const checkProviderAvailability = async (tmdbId, mediaType) => {
     setCheckingAvailability(true);
     
     // 1. Prepare Initial Providers (Direct Engine + MovieBox + YouTube)
@@ -215,8 +201,7 @@ const ExploreScreen = ({ navigation, route }) => {
     }, 50);
 
     try {
-      const mediaType = movie.media_type || (movie.title ? 'movie' : 'tv');
-      const watchInfo = await fetchWatchProviders(movie.id, mediaType);
+      const watchInfo = await fetchWatchProviders(tmdbId, mediaType);
 
       const found = [];
       if (watchInfo) {
@@ -240,7 +225,6 @@ const ExploreScreen = ({ navigation, route }) => {
       }
 
       // Always Add Enabled MovieBox Sources as Primary Hubs
-
       (movieboxSources || [])
         .filter(s => s.enabled)
         .forEach((s, idx) => {
@@ -306,6 +290,25 @@ const ExploreScreen = ({ navigation, route }) => {
     }
   };
 
+  const handleMoviePress = async (movie) => {
+    if (!movie) return;
+    const title = movie.title || movie.name || 'Movie';
+    const mediaType = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
+    const tmdbId = movie.id;
+
+    console.log(`[Explore] handleMoviePress triggered: ${title} (${mediaType}:${tmdbId})`);
+    
+    setSelectedMovie(movie);
+    setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movie.poster_path });
+
+    if (mediaType === 'tv') {
+      setShowSeriesPicker(true);
+      return;
+    }
+
+    await checkProviderAvailability(tmdbId, mediaType);
+  };
+
   const handleSelectProvider = async provider => {
     const title = selectedMovie.title || selectedMovie.name;
     const mediaType = selectedMovie.media_type || (selectedMovie.title ? 'movie' : 'tv');
@@ -315,11 +318,16 @@ const ExploreScreen = ({ navigation, route }) => {
 
     const result = await navigateToOTT(
       provider,
-      title,
+      selectedMovie.episodeTitle || title,
       tmdbId,
       mediaType,
       provider.customDomain,
-      navigation
+      navigation,
+      selectedMovie.season || 1,
+      selectedMovie.episode || 1,
+      0,
+      selectedMovie.thumb || selectedMovie.poster_path,
+      title
     );
 
     // Handle unavailable from Direct Engine
@@ -328,7 +336,7 @@ const ExploreScreen = ({ navigation, route }) => {
     }
   };
 
-  const handleSelectEpisode = (episode, season) => {
+  const handleSelectEpisode = async (episode, season) => {
     setShowSeriesPicker(false);
     
     const updatedItem = {
@@ -341,8 +349,7 @@ const ExploreScreen = ({ navigation, route }) => {
     setSelectedQuickItem(updatedItem);
     setSelectedMovie({ ...selectedMovie, ...updatedItem });
     
-    setCheckingAvailability(true);
-    setShowPicker(true);
+    await checkProviderAvailability(selectedQuickItem.tmdbId, 'tv');
   };
 
   const renderSearchResult = ({ item }) => {

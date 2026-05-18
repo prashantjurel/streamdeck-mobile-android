@@ -27,7 +27,6 @@ export const OTT_PROVIDER_MAP = {
 const buildEngineUrl = (engineId, tmdbId, mediaType, s = 1, e = 1, resumeTime = 0) => {
   const t = Math.floor(resumeTime);
   const commonCineParams = `autoplay=true&autoskip=true&back=close&color=%238b5cf6&t=${t}&events=true`;
-  const commonVidParams = `autoPlay=true&nextEpisode=true&episodeSelector=true&color=8b5cf6&progress=${t}`;
 
   switch (engineId) {
     case 'cinesrc':
@@ -35,12 +34,6 @@ const buildEngineUrl = (engineId, tmdbId, mediaType, s = 1, e = 1, resumeTime = 
         return `https://cinesrc.st/embed/movie/${tmdbId}?${commonCineParams}`;
       }
       return `https://cinesrc.st/embed/tv/${tmdbId}?s=${s}&e=${e}&${commonCineParams}`;
-    
-    case 'vidking':
-      if (mediaType === 'movie') {
-        return `https://vidking.net/embed/movie/${tmdbId}?${commonVidParams}`;
-      }
-      return `https://vidking.net/embed/tv/${tmdbId}/${s}/${e}?${commonVidParams}`;
     
     default:
       return null;
@@ -56,11 +49,10 @@ export const checkDirectEngineAvailability = (tmdbId, mediaType, s = 1, e = 1, r
   return new Promise(async (resolve) => {
     const { loadSettings } = require('./storage');
     const settings = await loadSettings();
-    const priority = settings.directEnginePriority || ['cinesrc', 'vidking'];
+    const priority = settings.directEnginePriority || ['cinesrc'];
     
     const engineMap = {
-      'cinesrc': { id: 'cinesrc', name: 'CineSrc' },
-      'vidking': { id: 'vidking', name: 'VidKing' },
+      'cinesrc': { id: 'cinesrc', name: 'CineSrc' }
     };
 
     const providers = priority.map(id => engineMap[id]).filter(Boolean);
@@ -140,18 +132,11 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
   // Case A: Unified Direct Engine (StreamDeck Engine)
   if (provider.id === 'direct') {
     if (tmdbId && mediaType) {
-      const resolved = await checkDirectEngineAvailability(tmdbId, mediaType, s, e, resumeTime);
-      if (resolved) {
-        finalUrl = resolved.url;
-        finalId = 'direct'; 
-        finalName = `StreamDeck Engine`;
-        engineSource = resolved.id; 
-      } else {
-        return { 
-          status: 'unavailable', 
-          message: 'This title is not available on StreamDeck Engine. Please try other streaming sources.' 
-        };
-      }
+      // Delegate the availability check to the WebViewScreen so the UI doesn't freeze
+      finalUrl = 'streamdeck://direct';
+      finalId = 'direct'; 
+      finalName = `StreamDeck Engine`;
+      engineSource = 'direct'; 
     }
   }
 

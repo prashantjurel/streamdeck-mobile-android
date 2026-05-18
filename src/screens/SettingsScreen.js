@@ -745,43 +745,19 @@ const SettingsScreen = ({ navigation }) => {
                 </View>
 
                 <View style={styles.enginePriorityList}>
-                  <Text style={styles.prioritySublabel}>Preferred Priority Order:</Text>
-                  {settings.directEnginePriority?.filter(id => id !== 'rivestream').map((id, index) => {
-                    const engineMap = {
-                      'cinesrc': { name: 'CineSrc (Primary Server)', id: 'cinesrc' },
-                      'vidking': { name: 'VidKing (Secondary Server)', id: 'vidking' },
-                    };
-                    const engine = engineMap[id] || { name: id, id };
-                    
-                    return (
-                      <View key={id} style={styles.priorityItem}>
-                        <View style={styles.priorityInfo}>
-                          <View style={styles.priorityIndex}>
-                            <Text style={styles.priorityIndexText}>{index + 1}</Text>
-                          </View>
-                          <Text style={styles.priorityName}>{engine.name}</Text>
-                        </View>
-                        {index > 0 && (
-                          <TouchableOpacity 
-                            style={styles.priorityMoveBtn}
-                            onPress={() => {
-                              const newPriority = [...settings.directEnginePriority];
-                              const temp = newPriority[index];
-                              newPriority[index] = newPriority[index - 1];
-                              newPriority[index - 1] = temp;
-                              setSettings({ ...settings, directEnginePriority: newPriority });
-                            }}
-                          >
-                            <Ionicons name="chevron-up-circle" size={24} color={Colors.accentPurple} />
-                          </TouchableOpacity>
-                        )}
+                  <Text style={styles.prioritySublabel}>Active Server Engine:</Text>
+                  <View style={styles.priorityItem}>
+                    <View style={styles.priorityInfo}>
+                      <View style={[styles.priorityIndex, { backgroundColor: 'rgba(139, 92, 246, 0.2)' }]}>
+                        <Ionicons name="server" size={12} color={Colors.accentPurple} />
                       </View>
-                    );
-                  })}
+                      <Text style={styles.priorityName}>CineSrc Engine (Ultra HD Server)</Text>
+                    </View>
+                  </View>
                 </View>
                 
                 <Text style={styles.engineNote}>
-                  Priority defines which server is tried first. If content is missing on the preferred server, StreamDeck automatically falls back to others.
+                  StreamDeck directly interfaces with CineSrc to provide an uninterrupted, high-quality viewing experience.
                 </Text>
               </View>
           )}

@@ -28,7 +28,7 @@ import { getImageUrl } from '../services/tmdb';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const CARD_HEIGHT = 520;
-const ANIM_DURATION = 1200;
+const ANIM_DURATION = 1400;
 const AUTO_PLAY_MS = 8000;
 
 // ═══════════════════════════════════════════════════════════
@@ -61,17 +61,17 @@ const BlinkingLiveBadge = memo(() => {
 });
 
 // TeamLogo — Logo with initials fallback
-const TeamLogo = memo(({uri, initials}) => {
+const TeamLogo = memo(({ uri, initials }) => {
   const [error, setError] = useState(false);
-  
+
   if (error || !uri) {
     return <Text style={styles.teamInitials}>{initials || '?'}</Text>;
   }
-  
+
   return (
-    <Image 
-      source={{uri}} 
-      style={styles.largeTeamLogo} 
+    <Image
+      source={{ uri }}
+      style={styles.largeTeamLogo}
       resizeMode="contain"
       onError={() => setError(true)}
     />
@@ -92,8 +92,8 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
     if (isSports) {
       const m = movie.match || {};
       const parts = [];
-      if (m.status === 'LIVE') parts.push('LIVE NOW');
-      else if (m.time) parts.push(m.time);
+      if (m.time) parts.push(m.time);
+      else if (m.status === 'LIVE') parts.push('LIVE NOW');
       if (m.type) {
         const sportMap = { football: 'Football', cricket: 'Cricket', f1: 'Formula 1' };
         parts.push(sportMap[m.type] || m.type);
@@ -138,10 +138,10 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
         resizeMode="cover"
         onError={() => {
           // If the primary image fails, use a high-quality sport-specific fallback
-          const fallback = isSports 
-            ? (movie.match?.type === 'f1' 
-                ? 'https://images.unsplash.com/photo-1551221281-224451000632?q=80&w=1200' 
-                : 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=1200')
+          const fallback = isSports
+            ? (movie.match?.type === 'f1'
+              ? 'https://images.unsplash.com/photo-1551221281-224451000632?q=80&w=1200'
+              : 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=1200')
             : 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1200';
           setCurrentBackdrop({ uri: fallback });
         }}
@@ -241,10 +241,10 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
               style={[styles.addBtn, isSaved && styles.addBtnActive]}
               onPress={() => onAddToList(movie)}
               activeOpacity={0.7}>
-              <Ionicons 
-                name={isSaved ? "checkmark" : "add"} 
-                size={24} 
-                color="#fff" 
+              <Ionicons
+                name={isSaved ? "checkmark" : "add"}
+                size={24}
+                color="#fff"
               />
             </TouchableOpacity>
           )}
@@ -282,7 +282,7 @@ const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList,
     // ── Horizontal Movement (Exit) ──
     const translateX = interpolate(
       d, [-1, 0, 1, 2],
-      [-screenWidth * 0.8, 0, 0, 0],
+      [-screenWidth, 0, 0, 0],
       Extrapolation.CLAMP
     );
 
@@ -293,8 +293,9 @@ const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList,
       Extrapolation.CLAMP,
     );
 
-    const opacity = interpolate(d, [-0.5, 0, 1, 2], [0, 1, 0.45, 0.20], Extrapolation.CLAMP);
-    const zIdx = interpolate(d, [0, 1, 2], [3, 2, 1], Extrapolation.CLAMP);
+    // Keep fully opaque so it doesn't fade on swipe!
+    const opacity = interpolate(d, [-1, -0.9, 0, 1, 2], [0, 1, 1, 1, 1], Extrapolation.CLAMP);
+    const zIdx = interpolate(d, [-1, 0, 1, 2], [4, 3, 2, 1], Extrapolation.CLAMP);
 
     return {
       width: cardWidth,
@@ -302,7 +303,7 @@ const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList,
       zIndex: Math.round(zIdx),
       transform: [
         { translateX },
-        { scale: interpolate(d, [-1, 0, 1, 2], [0.9, 1, 1, 1], Extrapolation.CLAMP) }
+        { scale: 1 }
       ],
     };
   });
@@ -333,7 +334,7 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
   const goTo = useCallback((idx, velocity = 0) => {
     // Infinite indexing: we don't clamp, we just go to the target
     activeRef.current = idx;
-    
+
     // Calculate UI index for dots
     const len = moviesRef.current.length;
     if (len > 0) {
@@ -341,10 +342,14 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
       setActiveIndex(uiIdx);
     }
 
-    // Use withTiming for exactly controlled smooth swipe duration
-    animIndex.value = withTiming(idx, {
-      duration: ANIM_DURATION,
-      easing: Easing.inOut(Easing.quad),
+    // Use withSpring for a buttery smooth, physics-based snap
+    animIndex.value = withSpring(idx, {
+      damping: 20,
+      stiffness: 160,
+      mass: 0.7,
+      overshootClamping: true, // Prevents wobbly bouncing
+      restDisplacementThreshold: 0.01,
+      restSpeedThreshold: 0.01,
     });
   }, [animIndex]);
 
@@ -391,7 +396,7 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
       onPanResponderRelease: (_, g) => {
         const velocity = g.vx || 0;
         const dragThreshold = SCREEN_WIDTH * 0.2;
-        
+
         let targetIdx = activeRef.current;
 
         if (g.dx < -dragThreshold || velocity < -0.3) {
@@ -489,7 +494,7 @@ const styles = StyleSheet.create({
   heroCard: {
     flex: 1,
     borderRadius: 20,
-    backgroundColor: '#000000', 
+    backgroundColor: '#000000',
     overflow: 'hidden',
   },
 

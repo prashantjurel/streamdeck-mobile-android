@@ -17,27 +17,35 @@ const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.28;
 const CARD_HEIGHT = CARD_WIDTH * 1.7;
 
-const PosterCard = ({movie, onPress, style, size = 'default'}) => {
-  const [isSaved, setIsSaved] = useState(false);
+const PosterCard = ({movie, onPress, style, size = 'default', isSaved: externalIsSaved, onAddToList}) => {
+  const [localIsSaved, setLocalIsSaved] = useState(false);
   const title = movie.title || movie.name || 'Unknown';
   const rating = movie.vote_average
     ? movie.vote_average.toFixed(1)
     : null;
   const posterUrl = getImageUrl(movie.poster_path);
   
+  const isSaved = externalIsSaved !== undefined ? externalIsSaved : localIsSaved;
+
   useEffect(() => {
-    checkSavedStatus();
-  }, [movie.id]);
+    if (externalIsSaved === undefined) {
+      checkSavedStatus();
+    }
+  }, [movie.id, externalIsSaved]);
 
   const checkSavedStatus = async () => {
     const list = await loadWatchlist();
-    setIsSaved(list.some(item => item.id === movie.id));
+    setLocalIsSaved(list.some(item => item.id === movie.id));
   };
 
   const handleToggleLibrary = async (e) => {
     e.stopPropagation();
-    const updatedList = await toggleWatchlistItem(movie);
-    setIsSaved(updatedList.some(item => item.id === movie.id));
+    if (onAddToList) {
+      onAddToList(movie);
+    } else {
+      const updatedList = await toggleWatchlistItem(movie);
+      setLocalIsSaved(updatedList.some(item => item.id === movie.id));
+    }
   };
 
   const cardWidth = size === 'small' ? CARD_WIDTH * 0.85 : CARD_WIDTH;

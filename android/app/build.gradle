@@ -85,8 +85,8 @@ android {
         applicationId "com.streamdeck.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 13
-        versionName "1.2.2"
+        versionCode 14
+        versionName "1.2.3"
     }
     splits {
         abi {

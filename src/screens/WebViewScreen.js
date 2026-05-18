@@ -11,6 +11,9 @@ import {
   BackHandler,
   NativeModules,
   NativeEventEmitter,
+  Image,
+  Animated,
+  Easing,
 } from 'react-native';
 import {WebView} from 'react-native-webview';
 import {useSafeAreaInsets} from 'react-native-safe-area-context';
@@ -21,6 +24,7 @@ import { useWindowDimensions } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 import { addContinueWatchingEntry } from '../utils/storage';
 import { syncWithCloud } from '../services/sync';
+import { checkDirectEngineAvailability } from '../utils/OTTNavigation';
 
 const WebViewScreen = ({navigation, route}) => {
   const {
@@ -43,6 +47,220 @@ const WebViewScreen = ({navigation, route}) => {
   const [pageTitle, setPageTitle] = useState(title || 'Loading...');
   const [advIndex, setAdvIndex] = useState(initialIndex || 0);
   const [isAdvLoading, setIsAdvLoading] = useState(false);
+  const [currentThumb, setCurrentThumb] = useState(
+    thumb && typeof thumb === 'string' && thumb.startsWith('http') ? thumb : null
+  );
+  const [activeEngineSource, setActiveEngineSource] = useState(engineSource);
+  const [metadata, setMetadata] = useState(null);
+  const progressWidth = useRef(new Animated.Value(0)).current;
+  const castAnims = useRef(
+    Array.from({ length: 12 }, () => new Animated.Value(0))
+  ).current;
+  const scrollViewRef = useRef(null);
+  
+  const [isPlayerReady, setIsPlayerReady] = useState(false);
+  const [isLoaderVisible, setIsLoaderVisible] = useState(true);
+  const loaderOpacity = useRef(new Animated.Value(1)).current;
+  const [errorDetails, setErrorDetails] = useState(null);
+
+  // Handle lazy resolution of Direct Engine to avoid UI freezes
+  useEffect(() => {
+    if (url === 'streamdeck://direct') {
+      console.log('[WebView] Lazy loading StreamDeck Engine availability...');
+      checkDirectEngineAvailability(tmdbId, mediaType, season, episode, resumeTime)
+        .then(resolved => {
+          if (resolved) {
+            console.log('[WebView] Stream resolved to:', resolved.url);
+            setActiveEngineSource(resolved.id);
+            setCurrentUrl(resolved.url);
+          } else {
+            console.log('[WebView] Stream unavailable.');
+            setErrorDetails('This title is not currently available on StreamDeck Engine. Please try other sources.');
+          }
+        })
+        .catch(err => {
+          setErrorDetails('Failed to connect to StreamDeck Engine.');
+        });
+    }
+  }, [url, tmdbId, mediaType, season, episode, resumeTime]);
+
+  // Activate the native Android Dialog Blocker to suppress ALL JS popups
+  // (alert/confirm/prompt) from cross-origin iframes like CineSrc
+  useEffect(() => {
+    if (NativeModules.DialogBlockerModule) {
+      // Continuous patching for 60s to catch any WebView recreation
+      NativeModules.DialogBlockerModule.enableContinuous(60000);
+      console.log('[WebView] ✓ Native DialogBlocker activated — all JS dialogs will be auto-dismissed');
+    }
+  }, []);
+
+  // Initial Continue Watching entry creation — register immediately but with
+  // resumeTime-aware progress so it doesn't reset to 1% on re-entry
+  useEffect(() => {
+    if (tmdbId) {
+      console.log('[WebView] Registering initial Continue Watching entry for:', title);
+      try {
+        // If resuming, preserve existing progress estimate; otherwise start at 0.5%
+        const initialProgress = resumeTime > 0 ? undefined : 0.5;
+        addContinueWatchingEntry({
+          tmdbId,
+          mediaType,
+          showName: showName || null,
+          season: season !== undefined ? Number(season) : null,
+          episode: episode !== undefined ? Number(episode) : null,
+          title,
+          progress: initialProgress,
+          currentTime: resumeTime || 0,
+          duration: 0, // Will be populated by first timeupdate
+          thumb: currentThumb,
+          appId,
+          url: currentUrl,
+          showName,
+        });
+      } catch (err) {
+        console.warn('[WebView] Initial CW save failed:', err);
+      }
+    }
+  }, [tmdbId, mediaType, season, episode, title, appId, currentUrl]);
+
+  // Fetch TMDB Cast, Tagline & Details to keep user engaged
+  useEffect(() => {
+    if (tmdbId && mediaType) {
+      const fetchUrl = `https://api.themoviedb.org/3/${mediaType}/${tmdbId}?api_key=4cb1eeab94f45affe2536f2c684a5c9e&append_to_response=credits`;
+      fetch(fetchUrl)
+        .then(res => res.json())
+        .then(data => {
+          setMetadata(data);
+          let updatedThumb = currentThumb;
+          if (data.poster_path && (!currentThumb || !currentThumb.startsWith('http'))) {
+            updatedThumb = `https://image.tmdb.org/t/p/w400${data.poster_path}`;
+            setCurrentThumb(updatedThumb);
+          }
+
+          // Re-update CW entry with high-resolution thumbnail only (preserve existing progress)
+          if (tmdbId) {
+            try {
+              addContinueWatchingEntry({
+                tmdbId,
+                mediaType,
+                showName: showName || null,
+                season: season !== undefined ? Number(season) : null,
+                episode: episode !== undefined ? Number(episode) : null,
+                title,
+                thumb: updatedThumb,
+                appId,
+                url: currentUrl,
+                showName,
+              });
+            } catch(e) {}
+          }
+          
+          // Trigger staggered pop animations for cast members
+          if (data.credits?.cast) {
+            castAnims.forEach(anim => anim.setValue(0));
+            Animated.stagger(250, castAnims.map(anim => 
+              Animated.spring(anim, {
+                toValue: 1,
+                tension: 50,
+                friction: 6,
+                useNativeDriver: true,
+              })
+            )).start();
+          }
+        })
+        .catch(err => console.warn('[WebView] Failed to fetch TMDB details:', err));
+    }
+  }, [tmdbId, mediaType]);
+
+  // Synchronized scroll listener
+  useEffect(() => {
+    const listener = progressWidth.addListener(({ value }) => {
+      if (scrollViewRef.current && value > 40) {
+        // Value goes from 40 to 90. Map it to scroll down slowly
+        const maxScroll = 120; 
+        const scrollPos = ((value - 40) / 50) * maxScroll;
+        scrollViewRef.current.scrollTo({ y: Math.max(0, scrollPos), animated: true });
+      }
+    });
+    return () => progressWidth.removeListener(listener);
+  }, []);
+
+  // Animated Progress Bar logic
+  useEffect(() => {
+    let timer;
+    if (!isPlayerReady) {
+      setIsLoaderVisible(true);
+      loaderOpacity.setValue(1);
+      progressWidth.setValue(0);
+      
+      // Multi-phase sequence: Snappy initial load, smooth decel, and synchronized slow creep
+      Animated.sequence([
+        Animated.timing(progressWidth, {
+          toValue: 60,
+          duration: 1500,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: false,
+        }),
+        Animated.timing(progressWidth, {
+          toValue: 90,
+          duration: 4500,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: false,
+        }),
+        Animated.timing(progressWidth, {
+          toValue: 98,
+          duration: 6000, // 6 seconds slow creep (perfectly synced with the safety timeout!)
+          easing: Easing.linear,
+          useNativeDriver: false,
+        })
+      ]).start();
+    } else {
+      // 1. Synchronously stop any active progress animations (avoiding async callback bugs)
+      progressWidth.stopAnimation();
+      
+      // 2. Animate progress bar to 100% and fade out the loader overlay in parallel
+      Animated.parallel([
+        Animated.timing(progressWidth, {
+          toValue: 100,
+          duration: 600,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }),
+        Animated.timing(loaderOpacity, {
+          toValue: 0,
+          duration: 400,
+          easing: Easing.out(Easing.ease),
+          useNativeDriver: false,
+        })
+      ]).start(() => {
+        setIsLoaderVisible(false);
+        console.log('[WebView] Loader overlay successfully dismissed!');
+      });
+
+      // Safety fallback: ensure loader is unmounted after 800ms even if Animated hangs on Fabric/Bridgeless
+      timer = setTimeout(() => {
+        setIsLoaderVisible(false);
+      }, 800);
+    }
+
+    return () => {
+      if (timer) clearTimeout(timer);
+    };
+  }, [isPlayerReady]);
+
+  useEffect(() => {
+    if ((!currentThumb || !currentThumb.startsWith('http')) && mediaType === 'tv' && tmdbId && season && episode) {
+      // Use the generic TMDB API key to fetch the episode image
+      fetch(`https://api.themoviedb.org/3/tv/${tmdbId}/season/${season}/episode/${episode}?api_key=4cb1eeab94f45affe2536f2c684a5c9e`)
+        .then(res => res.json())
+        .then(data => {
+          if (data.still_path) {
+            setCurrentThumb(`https://image.tmdb.org/t/p/w400${data.still_path}`);
+          }
+        })
+        .catch(err => console.warn('[WebView] Failed to fetch thumbnail', err));
+    }
+  }, [currentThumb, mediaType, tmdbId, season, episode]);
 
   // 2. Derived state
   // Only trigger automatic PiP layout if the window is truly small (actual PiP/Split window)
@@ -180,8 +398,6 @@ const WebViewScreen = ({navigation, route}) => {
       }, 100);
     }
   };
-  const [isPlayerReady, setIsPlayerReady] = useState(false);
-
   // 3. Cloud Sync on Unmount (Save progress to other devices)
   useEffect(() => {
     return () => {
@@ -191,56 +407,131 @@ const WebViewScreen = ({navigation, route}) => {
       }
     };
   }, [userId]);
-  const [errorDetails, setErrorDetails] = useState(null);
 
   // Safety Timeout: Force show player after 12s if stuck
   useEffect(() => {
     let timer;
-    if (!isPlayerReady && !errorDetails && !loading) {
+    if (!isPlayerReady && !errorDetails) {
       timer = setTimeout(() => {
-        console.log('[WebView] Post-load safety timeout - Force showing player');
+        console.log('[WebView] Stuck load safety timeout - Force showing player');
         setIsPlayerReady(true);
-      }, 4000);
+      }, 12000);
     }
     return () => clearTimeout(timer);
-  }, [isPlayerReady, errorDetails, loading]);
+  }, [isPlayerReady, errorDetails]);
 
   const lastProgressUpdate = useRef(0);
+  const hasSeekedRef = useRef(false);
   
   const handleMessage = (event) => {
     try {
       const data = JSON.parse(event.nativeEvent.data);
       
-      // 1. CineSrc Handlers
-      if (data.type === 'cinesrc:ready') {
-        console.log('[WebView] CineSrc Engine Ready');
-        setIsPlayerReady(true);
-        // Explicitly seek to requested time (even if 0) to override internal player memory
-        webViewRef.current.injectJavaScript(`
-          window.postMessage({ type: 'cinesrc:seek', time: ${resumeTime || 0} }, '*');
-        `);
-      } 
-      
-      // 2. Robust Progress Extraction
+      // 1. Robust Progress Extraction — handle CineSrc, raw video, and nested structures
       const rawEvent = data.type === 'PLAYER_EVENT' ? (data.event || (data.data && data.data.event)) : (data.event || data.type || (data.data && data.data.event));
       const rawCurrentTime = data.currentTime ?? data.time ?? data.seconds ?? data.data?.currentTime ?? data.data?.time ?? data.data?.seconds;
       const rawDuration = data.duration ?? data.totalTime ?? data.total_time ?? data.data?.duration ?? data.data?.totalTime;
+      
+      // 2. CineSrc & General Engine Handlers
+      const isDirectReady = data.type === 'cinesrc:ready' || data.type === 'cinesrc:loadedmetadata' || rawEvent === 'sdm:video_ready' || data.type === 'rive:ready' || data.type === 'cinesrc:pulse_spoofed';
+      
+      if (isDirectReady || (!isDirectEngine && !isMovieBox && (rawEvent === 'ready' || rawEvent === 'player_ready' || rawEvent === 'video_playing'))) {
+        console.log('[WebView] CineSrc Engine Ready Triggered! hasSeeked:', hasSeekedRef.current);
+        setIsPlayerReady(true);
 
+        // Re-patch dialog blocker whenever player becomes ready (WebView may have recreated)
+        if (NativeModules.DialogBlockerModule) {
+          NativeModules.DialogBlockerModule.patchWebViews();
+        }
+
+        // Use CineSrc's command API to seek via postMessage (correct per docs)
+        if (!hasSeekedRef.current) {
+          hasSeekedRef.current = true;
+          const seekTime = resumeTime || 0;
+          console.log('[WebView] Sending CineSrc seek command! resumeTime:', seekTime);
+          webViewRef.current?.injectJavaScript(`
+            (function() {
+              // CineSrc Command API: seek via postMessage
+              var cinesrcFrames = document.querySelectorAll('iframe[src*="cinesrc"]');
+              var seekCmd = { type: 'cinesrc:command', command: 'seek', args: [${seekTime}] };
+              var playCmd = { type: 'cinesrc:command', command: 'play', args: [] };
+              
+              for (var i = 0; i < cinesrcFrames.length; i++) {
+                try {
+                  cinesrcFrames[i].contentWindow.postMessage(seekCmd, 'https://cinesrc.st');
+                  cinesrcFrames[i].contentWindow.postMessage(playCmd, 'https://cinesrc.st');
+                } catch(e) {}
+              }
+              
+              // Fallback: broadcast to all iframes
+              var allFrames = document.querySelectorAll('iframe');
+              for (var j = 0; j < allFrames.length; j++) {
+                try {
+                  allFrames[j].contentWindow.postMessage(seekCmd, '*');
+                  allFrames[j].contentWindow.postMessage(playCmd, '*');
+                } catch(e) {}
+              }
+
+              // Also try direct video element seek
+              try {
+                var v = document.querySelector('video');
+                if (v && ${seekTime} > 0) { v.currentTime = ${seekTime}; v.play().catch(function(){}); }
+              } catch(e) {}
+            })();
+            true;
+          `);
+        }
+
+        // If loadedmetadata, extract duration for better initial tracking
+        if (data.type === 'cinesrc:loadedmetadata' && data.duration) {
+          console.log('[WebView] CineSrc loadedmetadata — duration:', data.duration);
+          handleProgressUpdate(resumeTime || 0, data.duration);
+        }
+      } 
+
+      // 3. Progress Tracking — handle ALL timeupdate event formats
       if (rawEvent === 'timeupdate' || data.type === 'cinesrc:timeupdate') {
-        if (rawCurrentTime !== undefined && rawDuration !== undefined) {
+        if (rawCurrentTime !== undefined && rawDuration !== undefined && rawDuration > 0) {
           handleProgressUpdate(rawCurrentTime, rawDuration);
+          
+          // Safety fallback: if video is actively playing but loader is still showing, mark player ready
+          if (!isPlayerReady) {
+            console.log('[WebView] Active playback detected via timeupdate - marking player ready');
+            setIsPlayerReady(true);
+          }
+        }
+      } else if (data.type === 'cinesrc:seeked' || data.type === 'cinesrc:seeking') {
+        // Track seek events too for immediate progress update
+        if (data.currentTime !== undefined && data.duration !== undefined && data.duration > 0) {
+          handleProgressUpdate(data.currentTime, data.duration);
         }
       } else if (rawEvent === 'ended' || data.type === 'cinesrc:ended') {
+        // Mark as complete before auto-next
+        if (tmdbId) {
+          handleProgressUpdate(100, 100); // 100% complete
+        }
+        handleAutoNext();
+      } else if (data.type === 'cinesrc:nextepisode') {
+        // CineSrc auto-advanced to next episode
+        console.log('[WebView] CineSrc nextepisode:', data.season, data.episode);
         handleAutoNext();
       } else if (data.type === 'cinesrc:error') {
         setErrorDetails('This source is currently unavailable. Please try another server.');
       } else if (data.type === 'cinesrc:close') {
         navigation.goBack();
-      } else if (data.type === 'rive:ready' || data.type === 'ready') {
-        console.log('[WebView] Engine Ready');
-        setIsPlayerReady(true);
       } else if (data.type === 'fullscreen') {
         setIsFullscreen(data.enabled);
+      } else if (data.type === 'cinesrc:response') {
+        // Handle responses from CineSrc command API (getCurrentTime/getDuration)
+        if (data.command === 'getCurrentTime' && data.result !== undefined) {
+          cinesrcTimeRef.current = data.result;
+        } else if (data.command === 'getDuration' && data.result !== undefined) {
+          cinesrcDurationRef.current = data.result;
+        }
+        // If we have both values from polling, update progress
+        if (cinesrcTimeRef.current > 0 && cinesrcDurationRef.current > 0) {
+          handleProgressUpdate(cinesrcTimeRef.current, cinesrcDurationRef.current);
+        }
       }
     } catch (e) {
       const rawData = event.nativeEvent.data;
@@ -251,16 +542,19 @@ const WebViewScreen = ({navigation, route}) => {
   };
 
   const [showTrackingIndicator, setShowTrackingIndicator] = useState(false);
+  const cinesrcTimeRef = useRef(0);
+  const cinesrcDurationRef = useRef(0);
 
   const handleProgressUpdate = (currentTime, duration) => {
-    if (!tmdbId || !duration) return;
+    if (!tmdbId || !duration || duration <= 0) return;
     
-    const progress = (currentTime / duration) * 100;
+    const progress = Math.min(100, Math.max(0, (currentTime / duration) * 100));
     const now = Date.now();
     
-    // Throttle storage updates to every 5 seconds
-    if (now - lastProgressUpdate.current > 5000) {
+    // Throttle storage updates to every 2 seconds for near-real-time tracking
+    if (now - lastProgressUpdate.current > 2000) {
       lastProgressUpdate.current = now;
+      console.log(`[WebView] Progress: ${progress.toFixed(1)}% (${Math.floor(currentTime)}s / ${Math.floor(duration)}s)`);
       
       try {
         addContinueWatchingEntry({
@@ -271,22 +565,56 @@ const WebViewScreen = ({navigation, route}) => {
           episode: episode !== undefined ? Number(episode) : null,
           title,
           progress,
-          currentTime,
-          duration,
-          thumb,
+          currentTime: Math.floor(currentTime),
+          duration: Math.floor(duration),
+          thumb: currentThumb,
           appId,
           url,
           showName,
         });
-
-        // Show indicator briefly
-        setShowTrackingIndicator(true);
-        setTimeout(() => setShowTrackingIndicator(false), 2000);
       } catch (err) {
         console.error('[WebView] Progress save failed:', err);
       }
     }
   };
+
+  // Active CineSrc Progress Polling — fallback if postMessage events aren't received
+  // Uses CineSrc's command API: getCurrentTime() and getDuration() via postMessage
+  useEffect(() => {
+    if (!isPlayerReady || !isDirectEngine) return;
+    
+    const pollInterval = setInterval(() => {
+      if (webViewRef.current) {
+        webViewRef.current.injectJavaScript(`
+          (function() {
+            var frames = document.querySelectorAll('iframe[src*="cinesrc"]');
+            if (frames.length > 0) {
+              var cmd1 = { type: 'cinesrc:command', command: 'getCurrentTime', args: [] };
+              var cmd2 = { type: 'cinesrc:command', command: 'getDuration', args: [] };
+              for (var i = 0; i < frames.length; i++) {
+                try {
+                  frames[i].contentWindow.postMessage(cmd1, 'https://cinesrc.st');
+                  frames[i].contentWindow.postMessage(cmd2, 'https://cinesrc.st');
+                } catch(e) {}
+              }
+            }
+            // Also try direct video element
+            var v = document.querySelector('video');
+            if (v && v.duration > 0 && !isNaN(v.currentTime)) {
+              window.ReactNativeWebView.postMessage(JSON.stringify({
+                type: 'cinesrc:timeupdate',
+                currentTime: v.currentTime,
+                duration: v.duration
+              }));
+            }
+          })();
+          true;
+        `);
+      }
+    }, 3000); // Poll every 3 seconds
+    
+    return () => clearInterval(pollInterval);
+  }, [isPlayerReady, isDirectEngine]);
 
   const handleAutoNext = async () => {
     if (mediaType === 'tv' && tmdbId) {
@@ -319,12 +647,13 @@ const WebViewScreen = ({navigation, route}) => {
     'youtube.com', 'play.google.com', 'apps.apple.com', 'itunes.apple.com',
     'facebook.com/sharer', 'twitter.com/intent', 'pinterest.com/pin',
     'amazon.in', 'amazon.com', 'flipkart.com', 'myntra.com', 'ajio.com', 'tatacliq.com', 'reliance.com',
+    'adshield', 'ad-score', 'clktg', 'cobalten', 'highcpmgate', 'pubfuture', 'ezodn', 'ezoic', 'monetag', 'yandex',
+    'adkeeper', 'mgid', 'runative', 'adoperator', 'recreativ', 'popmyads', 'ero-advertising', 'plugrush',
   ];
 
   // Domains that are allowed for the embed players to work
   const ALLOWED_ENGINE_DOMAINS = [
     'cinesrc.st',
-    'vidking.net',
     // Common CDN domains used by these players for actual video streaming
     'googleapis.com',
     'gstatic.com',
@@ -363,68 +692,180 @@ const WebViewScreen = ({navigation, route}) => {
 
   // Build the injected JavaScript based on the type
   const buildInjectedJS = () => {
-    // CineSrc/VidKing bypass
-
-    const adSelectors = [
+    const AD_SELECTORS = [
       '[class*="banner"], [id*="banner"]',
       '[class*="popup"], [id*="popup"]',
       '[class*="overlay"]:not([class*="video"]):not([class*="player"])',
       '[id*="modal"], [class*="modal"]:not([class*="video"])',
-      'iframe:not([src*="cinesrc"]):not([src*="vidking"])',
+      'iframe:not([src*="cinesrc"]):not([src*="rive"])',
       'ins.adsbygoogle',
       '#aswift_0_expand',
       '#google_ads_iframe',
       '.ad-container',
       '.ad-placement',
+      '[class*="orientation"], [id*="orientation"]',
+      '[class*="rotate"], [id*="rotate"]'
     ];
 
     const baseScript = `
       (function() {
-        // Intercept window.open to prevent popup redirects
-        window.open = function() {
-          console.log('[AdBlock] Blocked window.open attempt');
-          return {
-            focus: function() {},
-            close: function() {},
-            closed: true
+        // A. Centralized dialog suppression helper
+        function suppressDialogs(win) {
+          try {
+            if (!win) return;
+            
+            // Override directly on the window object
+            win.alert = function() { console.log('[DialogBlock] Blocked alert'); return true; };
+            win.confirm = function() { console.log('[DialogBlock] Blocked confirm'); return true; };
+            win.prompt = function() { console.log('[DialogBlock] Blocked prompt'); return ""; };
+            win.open = function(url) { console.log('[DialogBlock] Blocked window.open attempt to:', url); return null; };
+            win.onbeforeunload = null;
+            
+            // Enforce using defineProperty so page scripts cannot easily overwrite them back
+            try {
+              Object.defineProperty(win, 'open', { value: function(url) { console.log('[DialogBlock] Blocked open:', url); return null; }, writable: false, configurable: false });
+              Object.defineProperty(win, 'alert', { value: function() { return true; }, writable: false, configurable: false });
+              Object.defineProperty(win, 'confirm', { value: function() { return true; }, writable: false, configurable: false });
+              Object.defineProperty(win, 'prompt', { value: function() { return ""; }, writable: false, configurable: false });
+              Object.defineProperty(win, 'onbeforeunload', { get: function() { return null; }, set: function() {}, configurable: false });
+            } catch(e) {}
+
+            // Intercept and drop 'beforeunload' event listeners
+            try {
+              var originalAdd = win.addEventListener;
+              win.addEventListener = function(type, listener, options) {
+                if (type === 'beforeunload') {
+                  console.log('[DialogBlock] Blocked beforeunload listener');
+                  return;
+                }
+                return originalAdd.apply(this, arguments);
+              };
+            } catch(e) {}
+          } catch(e) {}
+        }
+
+        // B. Instantly suppress dialogs on the main frame window
+        suppressDialogs(window);
+
+        // C. Prototype-level interceptor for all dynamic same-origin iframe elements
+        try {
+          var iframeDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentWindow');
+          if (iframeDesc && iframeDesc.get) {
+            Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+              get: function() {
+                var win = iframeDesc.get.call(this);
+                if (win) {
+                  suppressDialogs(win);
+                }
+                return win;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch(e) {}
+
+        try {
+          var docDesc = Object.getOwnPropertyDescriptor(HTMLIFrameElement.prototype, 'contentDocument');
+          if (docDesc && docDesc.get) {
+            Object.defineProperty(HTMLIFrameElement.prototype, 'contentDocument', {
+              get: function() {
+                var doc = docDesc.get.call(this);
+                if (doc) {
+                  var win = doc.defaultView || doc.parentWindow;
+                  if (win) {
+                    suppressDialogs(win);
+                  }
+                }
+                return doc;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch(e) {}
+
+        // D. Safe message posting helper
+        function safePostMessage(msg) {
+          try {
+            if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === 'function') {
+              window.ReactNativeWebView.postMessage(msg);
+            } else {
+              window.parent.postMessage(msg, '*');
+              window.top.postMessage(msg, '*');
+            }
+          } catch (e) {
+            console.error('[AdBlock] safePostMessage failed:', e);
+          }
+        }
+
+        // E. Intercept click redirects
+        var EARLY_AD_BLOCK_LIST = \${JSON.stringify(AD_BLOCK_LIST)};
+
+        document.addEventListener('click', function(e) {
+          var target = e.target.closest('a');
+          if (target) {
+            var href = target.getAttribute('href');
+            if (href) {
+              var lowerHref = href.toLowerCase();
+              var isBlocked = EARLY_AD_BLOCK_LIST.some(function(ad) {
+                return lowerHref.includes(ad);
+              });
+              if (isBlocked || lowerHref.startsWith('intent://') || lowerHref.startsWith('market://')) {
+                console.log('[AdBlock Early] Blocked click redirect to:', href);
+                e.preventDefault();
+                e.stopPropagation();
+                return false;
+              }
+            }
+          }
+        }, true);
+
+        try {
+          var realCreateElement = document.createElement;
+          document.createElement = function(tagName, options) {
+            var el = realCreateElement.call(document, tagName, options);
+            if (tagName && tagName.toLowerCase() === 'a') {
+              el.addEventListener('click', function(e) {
+                var href = el.getAttribute('href') || el.href;
+                if (href) {
+                  var lowerHref = href.toLowerCase();
+                  var isBlocked = EARLY_AD_BLOCK_LIST.some(function(ad) {
+                    return lowerHref.includes(ad);
+                  });
+                  if (isBlocked || !lowerHref.startsWith('http')) {
+                    console.log('[AdBlock Early] Blocked dynamic a tag redirect:', href);
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return false;
+                  }
+                }
+              }, true);
+            }
+            return el;
           };
-        };
+        } catch(e) {}
 
-        // Suppress all alerts, confirms, prompts
-        window.alert = function() { return true; };
-        window.confirm = function() { return true; };
-        window.prompt = function() { return ''; };
-
-        // 1. Video detection & readiness reporter
-
-        // 1. Video detection & readiness reporter
+        // F. Video detection & status reporting
         let playAttemptCount = 0;
         let hasStartedOnce = false;
         let loadTime = Date.now();
-        
+
         function setupVideoListener() {
           const video = document.querySelector('video');
-          const isEnginePage = window.location.href.includes('cinesrc') || 
-                              window.location.href.includes('vidking');
+          const isEnginePage = window.location.href.includes('cinesrc');
 
-          // Robust detection of "Started" state
           if (video && (video.currentTime > 0.5 || !video.paused)) {
             hasStartedOnce = true;
           }
 
-          // Readiness pulse
           if (isEnginePage || video) {
-            window.ReactNativeWebView.postMessage('cinesrc:ready');
+            safePostMessage(JSON.stringify({ type: 'cinesrc:pulse_spoofed' }));
           }
 
-          // Force play logic: 
-          // 1. Only at start (before hasStartedOnce)
-          // 2. Max 20 attempts
-          // 3. Stop trying after 30 seconds of page load to prevent forever-loops
           const timeSinceLoad = Date.now() - loadTime;
           if (video && video.paused && !hasStartedOnce && playAttemptCount < 20 && timeSinceLoad < 30000) {
             video.play().catch(() => {
-              // Click simulation (only if play fails)
               const evt = new MouseEvent('click', {
                 view: window,
                 bubbles: true,
@@ -441,9 +882,31 @@ const WebViewScreen = ({navigation, route}) => {
             if (!doc) return;
             const v = doc.querySelector('video');
             if (v) {
+              if (!v.dataset.sdmHooked) {
+                v.dataset.sdmHooked = 'true';
+                console.log('[WebView] Hooked native video element!');
+                
+                safePostMessage(JSON.stringify({ event: 'sdm:video_ready' }));
+                
+                v.addEventListener('timeupdate', function() {
+                  safePostMessage(JSON.stringify({
+                    event: 'timeupdate',
+                    currentTime: v.currentTime,
+                    duration: v.duration
+                  }));
+                });
+                
+                v.addEventListener('ended', function() {
+                  safePostMessage(JSON.stringify({ event: 'ended' }));
+                });
+                
+                v.addEventListener('play', function() {
+                  hasStartedOnce = true;
+                });
+              }
+
               if (!v.paused) {
                 hasStartedOnce = true;
-                window.ReactNativeWebView.postMessage('video_playing');
               } else if (!hasStartedOnce && playAttemptCount < 20 && timeSinceLoad < 30000) {
                 v.play().catch(() => {});
               }
@@ -456,40 +919,432 @@ const WebViewScreen = ({navigation, route}) => {
           }
           check(document);
         }
-        setInterval(setupVideoListener, 2000);
-        // Initial auto-play attempt after a short delay
-        setTimeout(() => { 
-          document.querySelector('video')?.play().catch(() => {});
-          // If no video found, try a global click to trigger the player's own internal logic
-          if (!document.querySelector('video')) document.body.click();
-        }, 5000);
+        setInterval(setupVideoListener, 1200);
 
-        // 2. Forward Player postMessage events to React Native (Aggressive)
-        window.addEventListener('message', function(event) {
+        // G. Custom controls and gestures
+        setInterval(() => {
+          let v = null;
+          let targetDoc = null;
+          
+          const searchDoc = (doc) => {
+            if (!doc) return;
+            const vid = doc.querySelector('video');
+            if (vid) { 
+              v = vid; 
+              targetDoc = doc; 
+              return; 
+            }
+            const frames = doc.querySelectorAll('iframe');
+            for(let i = 0; i < frames.length; i++) {
+              try { searchDoc(frames[i].contentDocument || frames[i].contentWindow.document); } catch(e) {}
+              if (v) return;
+            }
+          };
+          searchDoc(document);
+
+          if (v && targetDoc && !targetDoc.getElementById('sdm-custom-controls-container')) {
+             const container = targetDoc.createElement('div');
+             container.id = 'sdm-custom-controls-container';
+             container.style.cssText = 'position: fixed !important; top: 50% !important; left: 50% !important; transform: translate(-50%, -50%) !important; width: 100% !important; display: flex !important; flex-direction: row !important; align-items: center !important; justify-content: center !important; gap: 30px !important; z-index: 2147483647 !important; pointer-events: none !important; opacity: 1 !important; visibility: visible !important;';
+             
+             const brightnessOverlay = targetDoc.createElement('div');
+             brightnessOverlay.id = 'sdm-brightness-overlay';
+             brightnessOverlay.style.cssText = 'position: fixed !important; top: 0 !important; left: 0 !important; width: 100% !important; height: 100% !important; background: black !important; opacity: 0 !important; z-index: 2147483645 !important; pointer-events: none !important; display: block !important; visibility: visible !important;';
+             targetDoc.body.appendChild(brightnessOverlay);
+
+             const indicator = targetDoc.createElement('div');
+             indicator.id = 'sdm-gesture-indicator';
+             indicator.style.cssText = 'position: fixed !important; top: 20% !important; left: 50% !important; transform: translateX(-50%) !important; background: rgba(0,0,0,0.7) !important; color: white !important; padding: 10px 20px !important; border-radius: 20px !important; font-family: sans-serif !important; font-size: 16px !important; font-weight: bold !important; z-index: 2147483647 !important; opacity: 0 !important; transition: opacity 0.2s !important; pointer-events: none !important; display: flex !important; align-items: center !important; gap: 8px !important; backdrop-filter: blur(4px) !important; visibility: visible !important;';
+             targetDoc.body.appendChild(indicator);
+
+             const createBtn = (svg, size) => {
+               const btn = targetDoc.createElement('div');
+               btn.style.cssText = 'width: ' + size + 'px !important; height: ' + size + 'px !important; background: rgba(0,0,0,0.6) !important; border-radius: 50% !important; display: flex !important; align-items: center !important; justify-content: center !important; cursor: pointer !important; backdrop-filter: blur(4px) !important; border: 2px solid rgba(255,255,255,0.2) !important; flex-shrink: 0 !important; pointer-events: auto !important; visibility: visible !important; opacity: 1 !important;';
+               btn.innerHTML = svg;
+               return btn;
+             };
+
+             const playIcon = '<svg viewBox="0 0 24 24" fill="white" width="40" height="40" style="margin-left: 4px;"><path d="M8 5v14l11-7z"/></svg>';
+             const pauseIcon = '<svg viewBox="0 0 24 24" fill="white" width="40" height="40"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>';
+             const rwIcon = '<svg viewBox="0 0 24 24" fill="white" width="28" height="28"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8zm-1.1 11H9.5v-3.7H8V11.2h2.9v4.8zm3.3-4.8c-.8 0-1.4.6-1.4 1.4v2c0 .8.6 1.4 1.4 1.4s1.4-.6 1.4-1.4v-2c0-.8-.6-1.4-1.4-1.4zm-.5 3.3c0 .3.2.5.5.5s.5-.2.5-.5v-1.8c0-.3-.2-.5-.5-.5s-.5.2-.5.5v1.8z"/></svg>';
+             const ffIcon = '<svg viewBox="0 0 24 24" fill="white" width="28" height="28"><path d="M12 5c-4.42 0-8 3.58-8 8s3.58 8 8 8 8-3.58 8-8h-2c0 3.31-2.69 6-6 6s-6-2.69-6-6 2.69-6 6-6v4l5-5-5-5v4zm1.1 11h1.4v-3.7h1.5v-1.1h-2.9v4.8zm-3.3-4.8c.8 0 1.4.6 1.4 1.4v2c0 .8-.6 1.4-1.4 1.4s-1.4-.6-1.4-1.4v-2c0-.8.6-1.4 1.4-1.4zm.5 3.3c0 .3-.2.5-.5.5s-.5-.2-.5-.5v-1.8c0-.3.2-.5.5-.5s.5.2.5.5v1.8z"/></svg>';
+
+             const rwBtn = createBtn(rwIcon, 48);
+             const playBtn = createBtn(v.paused ? playIcon : pauseIcon, 64);
+             const ffBtn = createBtn(ffIcon, 48);
+
+             container.appendChild(rwBtn);
+             container.appendChild(playBtn);
+             container.appendChild(ffBtn);
+             targetDoc.body.appendChild(container);
+
+             v.addEventListener('play', () => { 
+               playBtn.innerHTML = pauseIcon; 
+             });
+             
+             v.addEventListener('pause', () => { 
+               playBtn.innerHTML = playIcon;
+             });
+
+             playBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               if (v.paused) v.play().catch(()=>{});
+               else v.pause();
+             });
+
+             rwBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               v.currentTime = Math.max(0, v.currentTime - 10);
+               showIndicator('⏪ -10s');
+             });
+
+             ffBtn.addEventListener('click', (e) => {
+               e.stopPropagation();
+               v.currentTime = Math.min(v.duration, v.currentTime + 10);
+               showIndicator('⏩ +10s');
+             });
+
+             let indTimeout;
+             const showIndicator = (text) => {
+               indicator.innerHTML = text;
+               indicator.style.opacity = '1';
+               clearTimeout(indTimeout);
+               indTimeout = setTimeout(() => { indicator.style.opacity = '0'; }, 1000);
+             };
+
+             let touchStartY = 0;
+             let touchStartX = 0;
+             let touchZone = '';
+             let initialVol = v.volume;
+             let initialBright = parseFloat(brightnessOverlay.style.opacity || '0');
+             
+             targetDoc.addEventListener('touchstart', (e) => {
+               if (e.touches.length === 1) {
+                 const t = e.touches[0];
+                 touchStartX = t.clientX;
+                 touchStartY = t.clientY;
+                 
+                 const width = window.innerWidth;
+                 if (touchStartX < width * 0.3) {
+                   touchZone = 'left';
+                   initialBright = parseFloat(brightnessOverlay.style.opacity || '0');
+                 } else if (touchStartX > width * 0.7) {
+                   touchZone = 'right';
+                   initialVol = v.volume;
+                 } else {
+                   touchZone = '';
+                 }
+               }
+             }, {passive: true});
+
+             targetDoc.addEventListener('touchmove', (e) => {
+               if (touchZone && e.touches.length === 1) {
+                 const t = e.touches[0];
+                 const deltaY = touchStartY - t.clientY;
+                 const height = window.innerHeight;
+                 const deltaPercent = deltaY / (height * 0.3); 
+
+                 if (touchZone === 'right') {
+                   let newVol = Math.max(0, Math.min(1, initialVol + deltaPercent));
+                   v.volume = newVol;
+                   const percent = Math.round(newVol * 100);
+                   showIndicator('🔊 Volume: ' + percent + '%');
+                 } else if (touchZone === 'left') {
+                   let newOpacity = initialBright - (deltaPercent * 0.8);
+                   newOpacity = Math.max(0, Math.min(0.8, newOpacity));
+                   brightnessOverlay.style.opacity = newOpacity;
+                   const brightPercent = Math.round((1 - (newOpacity / 0.8)) * 100);
+                   showIndicator('☀️ Brightness: ' + brightPercent + '%');
+                 }
+               }
+             }, {passive: true});
+
+             targetDoc.addEventListener('touchend', () => {
+               touchZone = '';
+             });
+          }
+        }, 1000);
+
+        // H. Auto click/dismiss Captchas, Age gates, and Ad modals
+        function findAndClickCaptchas(doc) {
+          if (!doc) return;
           try {
-            if (event.data) {
-              if (typeof event.data === 'object') {
-                window.ReactNativeWebView.postMessage(JSON.stringify(event.data));
-              } else if (typeof event.data === 'string' && event.data.includes('{')) {
-                window.ReactNativeWebView.postMessage(event.data);
+            const elements = doc.querySelectorAll('button, a, div, span, input, svg, path, img, iframe');
+            elements.forEach(el => {
+              if (el.tagName === 'IFRAME') {
+                try {
+                  if (el.contentDocument) findAndClickCaptchas(el.contentDocument);
+                } catch(e) {}
+                return;
               }
+              
+              const text = (el.innerText || el.textContent || el.value || '').toLowerCase().trim();
+              const id = (el.id || '').toLowerCase();
+              const cls = (typeof el.className === 'string' ? el.className : '').toLowerCase();
+              const alt = (el.getAttribute?.('alt') || '').toLowerCase();
+              
+              let isGreenCircle = false;
+              try {
+                const style = window.getComputedStyle(el);
+                const bg = style.backgroundColor || '';
+                const hasRadius = style.borderRadius && (style.borderRadius.includes('50%') || parseInt(style.borderRadius) > 15);
+                const g = bg.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/);
+                if (g && hasRadius) {
+                  const r = parseInt(g[1]);
+                  const greenVal = parseInt(g[2]);
+                  const b = parseInt(g[3]);
+                  if (greenVal > r + 15 && greenVal > b + 15) {
+                    isGreenCircle = true;
+                  }
+                }
+              } catch(e) {}
+
+              let shouldClick = 
+                isGreenCircle ||
+                text.includes('not a robot') ||
+                text.includes('im not a robot') ||
+                text.includes('i\'m not a robot') ||
+                text.includes('click allow') ||
+                text.includes('i am 18') ||
+                text.includes('i\'m 18') ||
+                text.includes('over 18') ||
+                text.includes('18+') ||
+                text.includes('agree') ||
+                text.includes('continue anyways') ||
+                text === 'continue anyways' ||
+                id.includes('verify') ||
+                cls.includes('verify') ||
+                alt.includes('verify') ||
+                alt.includes('check') ||
+                alt.includes('checkmark') ||
+                (el.tagName === 'path' && el.getAttribute('d')?.length > 100 && (cls.includes('check') || cls.includes('confirm')));
+
+              if (!shouldClick) {
+                const parentText = (el.parentElement?.innerText || '').toLowerCase();
+                const parentHasAdKeywords = parentText.includes('attention') || parentText.includes('update') || parentText.includes('hurry') || parentText.includes('rotate') || parentText.includes('robot') || parentText.includes('verification') || parentText.includes('captcha') || parentText.includes('allow');
+                if (parentHasAdKeywords) {
+                  if (text === 'close' || text === 'continue' || text === 'allow' || text === 'x' || text === '×' || text.includes('close') || text.includes('continue') || text.includes('allow') || text.includes('×')) {
+                    shouldClick = true;
+                  }
+                }
+              }
+
+              if (shouldClick) {
+                const rect = el.getBoundingClientRect();
+                if (rect.width > 0 && rect.height > 0) {
+                  console.log('[AutoClick Recursive] Clicking element:', text || el.tagName);
+                  
+                  let current = el;
+                  for (let i = 0; i < 3 && current; i++) {
+                    current.click();
+                    const clickEvt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                    current.dispatchEvent(clickEvt);
+                    try {
+                      const touchStart = new Event('touchstart', { bubbles: true, cancelable: true });
+                      current.dispatchEvent(touchStart);
+                      const touchEnd = new Event('touchend', { bubbles: true, cancelable: true });
+                      current.dispatchEvent(touchEnd);
+                    } catch(e) {}
+                    current = current.parentElement;
+                  }
+                }
+              }
+            });
+          } catch(e) {}
+        }
+
+        // I. Hide dialog overlays & ad-blocks recursive same-origin
+        function hideSameOriginBlockers(doc) {
+          if (!doc) return;
+          try {
+            const bodyText = (doc.body?.innerText || '').toLowerCase();
+            const triggers = ['robot', 'allow', 'antispam', 'rotate', 'phone', '18', 'attention', 'update', 'hurry', 'important'];
+            const hasTrigger = triggers.some(t => bodyText.includes(t));
+            
+            if (hasTrigger) {
+              doc.querySelectorAll('div, section, iframe, dialog').forEach(el => {
+                if (el.tagName === 'IFRAME') {
+                  try {
+                    if (el.contentDocument) hideSameOriginBlockers(el.contentDocument);
+                  } catch(e) {}
+                  return;
+                }
+                
+                const style = window.getComputedStyle(el);
+                const position = style.position;
+                const zIndex = parseInt(style.zIndex);
+                const elText = (el.innerText || el.textContent || '').toLowerCase();
+                
+                // Match the modal dialog overlay
+                const isAdOverlay = 
+                  elText.includes('rotate') ||
+                  elText.includes('phone') ||
+                  elText.includes('over 18') ||
+                  elText.includes('under 18') ||
+                  elText.includes('18+') ||
+                  elText.includes('attention') ||
+                  elText.includes('confirm that you') ||
+                  elText.includes('click "allow"') ||
+                  elText.includes('click allow') ||
+                  elText.includes('not a robot') ||
+                  elText.includes('robot') ||
+                  elText.includes('hurry up') ||
+                  elText.includes('important update') ||
+                  ((elText.includes('attention') || elText.includes('click more')) && (elText.includes('close') || elText.includes('more')));
+
+                if (isAdOverlay) {
+                  // Check if this element contains a video player (we never hide the video player)
+                  if (!el.querySelector('video') && !el.querySelector('iframe[src*="cinesrc"]') && !el.querySelector('iframe[src*="rive"]')) {
+                    
+                    // BEFORE we hide the modal, let's auto-click any confirm/allow button inside it!
+                    try {
+                      const clickables = el.querySelectorAll('button, a, [role="button"], div, span, svg, path, img');
+                      clickables.forEach(clickEl => {
+                        const clickText = (clickEl.innerText || clickEl.textContent || '').toLowerCase().trim();
+                        const clickCls = (typeof clickEl.className === 'string' ? clickEl.className : '').toLowerCase();
+                        const clickId = (clickEl.id || '').toLowerCase();
+                        
+                        // Check if this clickEl is a green checkmark or confirm button
+                        const isConfirmBtn = 
+                          clickText === 'allow' || clickText === 'ok' || clickText.includes('allow') || clickText.includes('agree') || clickText.includes('confirm') || clickText.includes('over 18') ||
+                          clickCls.includes('green') || clickCls.includes('success') || clickCls.includes('agree') || clickCls.includes('allow') || clickCls.includes('confirm') || clickCls.includes('check') ||
+                          clickId.includes('agree') || clickId.includes('allow') || clickId.includes('confirm') || clickId.includes('check') ||
+                          (clickEl.tagName === 'path' && clickEl.getAttribute('d')?.length > 50 && (clickCls.includes('check') || clickCls.includes('confirm') || clickCls.includes('success')));
+                        
+                        if (isConfirmBtn) {
+                          const rect = clickEl.getBoundingClientRect();
+                          if (rect.width > 0 && rect.height > 0) {
+                            console.log('[AutoConfirm] Auto-clicking confirm button inside ad overlay:', clickText || clickEl.tagName);
+                            clickEl.click();
+                            const evt = new MouseEvent('click', { bubbles: true, cancelable: true, view: window });
+                            clickEl.dispatchEvent(evt);
+                          }
+                        }
+                      });
+                    } catch(e) {}
+
+                    // Now hide and physically remove it!
+                    el.style.setProperty('display', 'none', 'important');
+                    el.style.setProperty('visibility', 'hidden', 'important');
+                    el.style.setProperty('pointer-events', 'none', 'important');
+                    try { el.remove(); } catch(e) {}
+                  }
+                }
+              });
             }
           } catch(e) {}
-        });
-        // 3. Fullscreen Detection
-        const onFsChange = () => {
-          const isFs = !!(document.fullscreenElement || document.webkitIsFullScreen || document.mozFullScreenElement || document.msFullscreenElement);
-          window.ReactNativeWebView.postMessage(JSON.stringify({
-            type: 'fullscreen',
-            enabled: isFs
-          }));
-        };
-        document.addEventListener('fullscreenchange', onFsChange);
-        document.addEventListener('webkitfullscreenchange', onFsChange);
-        document.addEventListener('mozfullscreenchange', onFsChange);
-        document.addEventListener('MSFullscreenChange', onFsChange);
+        }
 
-        // 4. Inject Viewport Meta Tag for correct scaling
+        // J. Recursively override same-origin iframe dialogs & strip sandbox
+        function blockIframeDialogs(doc) {
+          if (!doc) return;
+          try {
+            const win = doc.defaultView || doc.parentWindow;
+            if (win) {
+              suppressDialogs(win);
+            }
+            const frames = doc.querySelectorAll('iframe');
+            frames.forEach(f => {
+              try {
+                // Remove sandbox restrictions that break inner players
+                if (f.hasAttribute('sandbox')) {
+                  console.log('[WebView] Stripping sandbox attribute from iframe:', f.src);
+                  f.removeAttribute('sandbox');
+                }
+
+                const iframeWin = f.contentWindow;
+                if (iframeWin) {
+                  suppressDialogs(iframeWin);
+                }
+                const iframeDoc = f.contentDocument || f.contentWindow.document;
+                if (iframeDoc) {
+                  blockIframeDialogs(iframeDoc);
+                }
+              } catch (e) {}
+            });
+          } catch (e) {}
+        }
+
+        // Relentless overlay clearance recursively for all same-origin levels
+        function relentlessClearance(doc) {
+          if (!doc) return;
+          try {
+            doc.querySelectorAll('div, a, section, iframe, dialog').forEach(div => {
+              try {
+                const style = window.getComputedStyle(div);
+                const position = style.position;
+                if (position === 'fixed' || position === 'absolute') {
+                  const zIndex = parseInt(style.zIndex || '0');
+                  const width = div.offsetWidth;
+                  const height = div.offsetHeight;
+                  if (zIndex > 10 && (width > window.innerWidth * 0.4 || height > window.innerHeight * 0.4)) {
+                    // Check if it contains the video player or allowed iframes
+                    const hasPlayer = !!(
+                      div.querySelector('video') || 
+                      div.querySelector('iframe[src*="cinesrc"]') || 
+                      div.querySelector('iframe[src*="rive"]') || 
+                      div.querySelector('canvas') || 
+                      div.querySelector('.artplayer-app') || 
+                      div.querySelector('.vjs-tech')
+                    );
+                    
+                    if (!hasPlayer && !div.id.includes('player') && !div.id.includes('sdm-custom-controls-container') && !div.id.includes('sdm-brightness-overlay') && !div.id.includes('sdm-gesture-indicator') && !div.className.includes('controls')) {
+                      console.log('[AdBlock] Relentlessly removing overlay:', div.id || div.className || div.tagName);
+                      div.remove();
+                    }
+                  }
+                }
+              } catch(e) {}
+            });
+            
+            const frames = doc.querySelectorAll('iframe');
+            frames.forEach(f => {
+              try { relentlessClearance(f.contentDocument || f.contentWindow.document); } catch(e) {}
+            });
+          } catch(e) {}
+        }
+
+        // Setup double-action shield triggers (MutationObserver + periodic safety Sweeps)
+        try {
+          const runBlockers = () => {
+            findAndClickCaptchas(document);
+            hideSameOriginBlockers(document);
+            relentlessClearance(document);
+            blockIframeDialogs(document);
+          };
+          
+          if (typeof MutationObserver !== 'undefined') {
+            const observer = new MutationObserver(runBlockers);
+            observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
+          }
+          
+          // Fallback sweep interval
+          setInterval(runBlockers, 300);
+          
+          // Initial trigger
+          runBlockers();
+        } catch(e) {}
+
+        // K. CSS Style Shield Injection
+        function injectCSS() {
+          if (!document.getElementById('sdm-shield')) {
+            const style = document.createElement('style');
+            style.id = 'sdm-shield';
+            style.innerHTML = ${JSON.stringify(AD_SELECTORS)}.join(', ') + " { display: none !important; visibility: hidden !important; pointer-events: none !important; opacity: 0 !important; height: 0 !important; width: 0 !important; position: absolute !important; left: -9999px !important; } " +
+              "html, body { margin: 0 !important; padding: 0 !important; background: #000 !important; width: 100% !important; height: 100% !important; min-width: 100% !important; min-height: 100% !important; overflow: hidden !important; } " +
+              "iframe[src*='cinesrc'], iframe[src*='rive'], video { display: block !important; width: 100% !important; height: 100% !important; border: none !important; margin: 0 !important; padding: 0 !important; min-width: 100% !important; min-height: 100% !important; object-fit: contain !important; position: fixed !important; top: 0 !important; left: 0 !important; z-index: 10 !important; } " +
+              ".vjs-control-bar, .vjs-big-play-button, .player-controls, [class*='controls'], .control-bar { z-index: 2147483647 !important; pointer-events: auto !important; opacity: 1 !important; visibility: visible !important; } " +
+              ".vjs-play-control, .plyr__controls, .jw-controls, [class*='play-button'], [class*='play-pause'] { display: flex !important; display: block !important; visibility: visible !important; opacity: 1 !important; pointer-events: auto !important; } " +
+              "* { box-sizing: border-box !important; }";
+            document.head.appendChild(style);
+          }
+        }
+        
+        if (document.readyState === 'complete') injectCSS();
+        else window.addEventListener('load', injectCSS);
+        setInterval(injectCSS, 1200);
+
+        // L. Viewport locking
         const existingMeta = document.querySelector('meta[name="viewport"]');
         if (existingMeta) {
           existingMeta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
@@ -499,98 +1354,14 @@ const WebViewScreen = ({navigation, route}) => {
           meta.content = 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover';
           document.head.appendChild(meta);
         }
-        
-        // Monitor video elements and player classes for fullscreen (fallback)
-        setInterval(() => {
-          const v = document.querySelector('video');
-          const isVjsFs = !!document.querySelector('.vjs-fullscreen, .player-fullscreen, [class*="fullscreen"]');
-          const isFs = !!(document.fullscreenElement || document.webkitIsFullScreen || document.mozFullScreenElement || document.msFullscreenElement);
-          
-          if (isVjsFs || isFs) {
-            onFsChange();
-          }
-
-          if (v) {
-            v.onwebkitbeginfullscreen = () => onFsChange();
-            v.onwebkitendfullscreen = () => onFsChange();
-          }
-        }, 2000);
       })();
       true;
     `;
 
-    // For direct engine embeds, add cleanup CSS to maximize the player
-    if (isDirectEngine || isMovieBox) {
-      return `
-        ${baseScript}
-        (function() {
-          const selectors = [${adSelectors.map(s => `'${s}'`).join(', ')}];
-          
-          function cleanup() {
-            // 1. Inject Style Shield (Forcing edge-to-edge)
-            if (!document.getElementById('sdm-shield')) {
-              const style = document.createElement('style');
-              style.id = 'sdm-shield';
-              style.innerHTML = selectors.join(', ') + " { display: none !important; visibility: hidden !important; pointer-events: none !important; opacity: 0 !important; height: 0 !important; width: 0 !important; position: absolute !important; left: -9999px !important; } " +
-                "html, body { margin: 0 !important; padding: 0 !important; background: #000 !important; width: 100% !important; height: 100% !important; min-width: 100% !important; min-height: 100% !important; overflow: hidden !important; } " +
-                "iframe[src*='cinesrc'], iframe[src*='vidking'], video { display: block !important; width: 100% !important; height: 100% !important; border: none !important; margin: 0 !important; padding: 0 !important; min-width: 100% !important; min-height: 100% !important; object-fit: contain !important; position: fixed !important; top: 0 !important; left: 0 !important; z-index: 10 !important; } " +
-                ".vjs-control-bar, .vjs-big-play-button, .player-controls, [class*='controls'], .control-bar { z-index: 2147483647 !important; pointer-events: auto !important; opacity: 1 !important; visibility: visible !important; } " +
-                "* { box-sizing: border-box !important; }";
-              document.head.appendChild(style);
-            }
-
-            // 2. Physical Removal of stray elements
-            selectors.forEach(sel => {
-              try {
-                document.querySelectorAll(sel).forEach(el => {
-                  if (!el.querySelector('video') && !el.querySelector('iframe[src*="cinesrc"]') && !el.querySelector('iframe[src*="vidking"]')) {
-                     el.remove();
-                  }
-                });
-              } catch(e) {}
-            });
-
-            // 3. RELENTLESS OVERLAY CLEARANCE
-            // Find and remove invisible overlay blockers that prevent play/pause clicks
-            document.querySelectorAll('div[style*="position: fixed"], div[style*="position: absolute"], a[style*="position: fixed"]').forEach(div => {
-              try {
-                const style = window.getComputedStyle(div);
-                const zIndex = parseInt(style.zIndex);
-                if (zIndex > 10 && (div.offsetWidth > window.innerWidth * 0.5 || div.offsetHeight > window.innerHeight * 0.5)) {
-                  const hasPlayer = !!(div.querySelector('video') || div.querySelector('iframe') || div.querySelector('canvas') || div.querySelector('.artplayer-app') || div.querySelector('.vjs-tech'));
-                  if (!hasPlayer && !div.id.includes('player') && !div.className.includes('controls')) {
-                    div.remove();
-                  }
-                }
-              } catch(e) {}
-            });
-
-            // 3. Auto-click "Continue" buttons (Safe)
-            document.querySelectorAll('button, a').forEach(el => {
-              try {
-                const txt = (el.innerText || '').toLowerCase();
-                if (txt.includes('continue anyways') || txt.includes('i understand')) {
-                   el.click();
-                }
-              } catch(e) {}
-            });
-          }
-
-          const observer = new MutationObserver(cleanup);
-          observer.observe(document.body || document.documentElement, { childList: true, subtree: true });
-
-          if (document.readyState === 'complete') cleanup();
-          else window.addEventListener('load', cleanup);
-          setInterval(cleanup, 1500);
-        })();
-        true;
-      `;
-    }
-
     return baseScript;
   };
 
-  const webViewSource = { uri: url };
+  const webViewSource = { uri: currentUrl };
 
   return (
     <View style={[
@@ -671,12 +1442,13 @@ const WebViewScreen = ({navigation, route}) => {
       )}
 
       {/* WebView */}
-      <WebView
-        ref={webViewRef}
+      {currentUrl && currentUrl !== 'streamdeck://direct' && (
+        <WebView
+          ref={webViewRef}
         source={webViewSource}
         style={[
           styles.webview, 
-          { opacity: loading ? 0 : 1 },
+          { opacity: isPlayerReady ? 1 : 0 },
           (isFullscreen || isDirectEngine || isMovieBox) && {
             position: 'absolute',
             top: 0,
@@ -695,6 +1467,11 @@ const WebViewScreen = ({navigation, route}) => {
         onLoadStart={() => {
           setLoading(true);
           setErrorDetails(null);
+          hasSeekedRef.current = false;
+          // Re-activate dialog blocker on each load
+          if (NativeModules.DialogBlockerModule) {
+            NativeModules.DialogBlockerModule.patchWebViews();
+          }
         }}
         onLoadEnd={() => setLoading(false)}
         onMessage={handleMessage}
@@ -729,10 +1506,9 @@ const WebViewScreen = ({navigation, route}) => {
         mediaPlaybackRequiresUserAction={false}
         mixedContentMode="always"
         allowsFullscreenVideo={true}
-        // Allow popup checks which some players use for verification
         javaScriptCanOpenWindowsAutomatically={true}
         setSupportMultipleWindows={true}
-        // Allow local storage for player state and caching
+        injectedJavaScriptForMainFrameOnly={false}
         incognito={false}
         cacheEnabled={true}
         databaseEnabled={true}
@@ -746,38 +1522,63 @@ const WebViewScreen = ({navigation, route}) => {
         onShouldStartLoadWithRequest={(request) => {
           const requestUrl = request.url.toLowerCase();
           
-          // Always allow the initial URL and about:blank
+          // 1. Always allow standard local schemes & initial navigation
           if (requestUrl.startsWith('about:blank')) return true;
           if (requestUrl.startsWith('blob:')) return true;
           if (requestUrl.startsWith('data:')) return true;
           if (request.url === url) return true;
+
+          // 2. Block all non-http/https protocols (deep links, App store/Play Store redirects)
+          if (
+            !requestUrl.startsWith('http://') && 
+            !requestUrl.startsWith('https://')
+          ) {
+            console.log('[AdBlock] Blocked non-http/https redirect intent:', request.url);
+            return false;
+          }
           
-          // Global block for known ad/redirect domains
+          // 3. Block known ad/redirect networks
           const isAd = AD_BLOCK_LIST.some(ad => requestUrl.includes(ad));
           if (isAd) {
-            console.log('[AdBlock] Blocked:', request.url);
+            console.log('[AdBlock] Blocked (Blocklist matched):', request.url);
             return false;
           }
 
-          // WHITELIST ENFORCEMENT (Crucial for VidSrc/CineSrc stability)
-          if (isDirectEngine || isMovieBox) {
-            const isAllowed = ALLOWED_ENGINE_DOMAINS.some(domain => requestUrl.includes(domain.toLowerCase()));
+          // 4. Strict Top Frame Protection: Prevent ad scripts from hijacking the player frame
+          const isTop = request.isTopFrame ?? true;
+          if (isTop) {
+            const matchesAllowed = ALLOWED_ENGINE_DOMAINS.some(domain => requestUrl.includes(domain.toLowerCase()));
+            const matchesOriginal = allowedDomain.current && requestUrl.includes(allowedDomain.current.toLowerCase());
             
-            // If it's a top-frame navigation (redirecting the whole app), be very strict
-            if (request.isTopFrame && !isAllowed && request.url !== url) {
-              console.log('[Whitelist] Blocked external top-frame redirect:', request.url);
+            if (!matchesAllowed && !matchesOriginal) {
+              console.log('[AdBlock] Blocked suspicious top-frame ad redirect:', request.url);
               return false;
+            }
+          } else {
+            // For direct engine/moviebox subframes, strictly enforce whitelist
+            if (isDirectEngine || isMovieBox) {
+              const isAllowed = ALLOWED_ENGINE_DOMAINS.some(domain => requestUrl.includes(domain.toLowerCase()));
+              if (!isAllowed) {
+                console.log('[Whitelist] Blocked non-whitelisted iframe load:', request.url);
+                return false;
+              }
             }
           }
 
-          // Allow everything else (sub-frames, scripts, etc. are handled by AD_BLOCK_LIST)
           return true;
         }}
       />
+      )}
 
       {/* Cinematic Loading Overlay */}
-      {(!isPlayerReady || errorDetails) && (
-        <View style={[styles.loadingOverlay, !loading && { backgroundColor: 'transparent' }]} pointerEvents={loading ? 'auto' : 'none'}>
+      {(isLoaderVisible || errorDetails) && (
+        <Animated.View 
+          style={[
+            styles.loadingOverlay, 
+            { opacity: loaderOpacity }
+          ]} 
+          pointerEvents={isPlayerReady && !errorDetails ? 'none' : 'auto'}
+        >
           {errorDetails ? (
             <View style={styles.errorContent}>
               <Ionicons name="alert-circle" size={64} color={Colors.accentPink} />
@@ -797,15 +1598,165 @@ const WebViewScreen = ({navigation, route}) => {
               </TouchableOpacity>
             </View>
           ) : (
-            <View style={{ alignItems: 'center' }}>
-              <ActivityIndicator size="large" color={themeColor} />
-              <Text style={styles.loadingText}>Initializing StreamDeck Engine...</Text>
-              <Text style={[styles.loadingText, { fontSize: 12, marginTop: 8, opacity: 0.5 }]}>
-                {engineSource ? `Connecting to ${engineSource.toUpperCase()} server` : 'Finding the best server for you'}
-              </Text>
+            <View style={[StyleSheet.absoluteFill, { justifyContent: 'center', alignItems: 'center' }]}>
+              {/* Premium dark gradient background matching the app's cinematic dark theme */}
+              <LinearGradient 
+                colors={['#07070B', '#0F0F1A']} 
+                style={StyleSheet.absoluteFill} 
+              />
+              
+              {currentThumb && (
+                <>
+                  <Image 
+                    source={{ uri: currentThumb }} 
+                    style={[StyleSheet.absoluteFill, { opacity: 0.22 }]} 
+                    blurRadius={25} 
+                  />
+                  <LinearGradient 
+                    colors={['rgba(7, 7, 11, 0.4)', 'rgba(15, 15, 26, 0.96)']} 
+                    style={StyleSheet.absoluteFill} 
+                  />
+                </>
+              )}
+              <View style={{ alignItems: 'center', zIndex: 10, width: '85%' }}>
+                {currentThumb && (
+                  <View style={[styles.loadingThumbContainer, { shadowColor: themeColor }]}>
+                    <Image source={{uri: currentThumb}} style={styles.loadingThumb} />
+                    <LinearGradient
+                      colors={['transparent', 'rgba(0,0,0,0.85)']}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  </View>
+                )}
+                
+                {/* Title and details */}
+                <Text style={styles.loadingTitle}>{showName || title}</Text>
+                {mediaType === 'tv' && season && episode && (
+                  <Text style={styles.loadingSubtitle}>
+                    Season {season} • Episode {episode} {title !== showName ? `"${title}"` : ''}
+                  </Text>
+                )}
+                
+                {/* Tagline */}
+                {metadata?.tagline ? (
+                  <Text style={styles.loadingTagline}>"{metadata.tagline}"</Text>
+                ) : null}
+ 
+                {/* Animated Progress Bar */}
+                <View style={styles.progressBarBg}>
+                  <Animated.View 
+                    style={[
+                      styles.progressBarFill, 
+                      { 
+                        width: progressWidth.interpolate({
+                          inputRange: [0, 100],
+                          outputRange: ['0%', '100%'],
+                        }) 
+                      }
+                    ]} 
+                  >
+                    <LinearGradient
+                      colors={[themeColor, Colors.accentPink]}
+                      start={{x: 0, y: 0}}
+                      end={{x: 1, y: 0}}
+                      style={StyleSheet.absoluteFill}
+                    />
+                  </Animated.View>
+                </View>
+ 
+                {/* Dynamic Cast / Engagement Info */}
+                {metadata?.credits && (metadata.credits.cast?.length > 0 || metadata.credits.crew?.length > 0) ? (
+                  <View style={[styles.castContainer, { borderColor: themeColor + '20' }]}>
+                    <Text style={[styles.castTitle, { color: themeColor }]}>STARRING & CREATIVE TEAM</Text>
+                    <Animated.ScrollView 
+                      ref={scrollViewRef}
+                      style={styles.scrollView}
+                      contentContainerStyle={styles.actorsGrid}
+                      showsVerticalScrollIndicator={false}
+                    >
+                      {(() => {
+                        const director = metadata.credits.crew?.find(c => c.job === 'Director');
+                        const castList = metadata.credits.cast || [];
+                        const items = [];
+                        
+                        if (director) {
+                          items.push({
+                            id: `dir-${director.id || director.name}`,
+                            name: director.name,
+                            role: 'Director',
+                            profile_path: director.profile_path,
+                          });
+                        }
+                        castList.forEach(actor => {
+                          items.push({
+                            id: `act-${actor.id || actor.name}`,
+                            name: actor.name,
+                            role: actor.character || 'Actor',
+                            profile_path: actor.profile_path,
+                          });
+                        });
+ 
+                        const displayItems = items.slice(0, 12);
+ 
+                        return displayItems.map((item, index) => {
+                          // Interpolate opacity and scale based on progress (0 to 90) to be in perfect sync
+                          const opacity = progressWidth.interpolate({
+                            inputRange: [index * 7.5, Math.min(90, (index + 0.8) * 7.5)],
+                            outputRange: [0, 1],
+                            extrapolate: 'clamp',
+                          });
+                          
+                          const scale = progressWidth.interpolate({
+                            inputRange: [index * 7.5, Math.min(90, (index + 0.8) * 7.5)],
+                            outputRange: [0.6, 1],
+                            extrapolate: 'clamp',
+                          });
+ 
+                          return (
+                            <Animated.View 
+                              key={item.id || index}
+                              style={[
+                                styles.actorCard, 
+                                { 
+                                  opacity, 
+                                  transform: [{ scale }] 
+                                }
+                              ]}
+                            >
+                              {item.profile_path ? (
+                                <Image 
+                                  source={{ uri: `https://image.tmdb.org/t/p/w185${item.profile_path}` }} 
+                                  style={[styles.actorImage, { borderColor: themeColor + '50' }]} 
+                                />
+                              ) : (
+                                <View style={[styles.actorPlaceholder, { borderColor: themeColor + '30' }]}>
+                                  <Ionicons name="person" size={20} color="rgba(255,255,255,0.4)" />
+                                </View>
+                              )}
+                              <Text style={styles.actorName} numberOfLines={1}>{item.name}</Text>
+                              <Text style={styles.actorCharacter} numberOfLines={1}>{item.role || ''}</Text>
+                            </Animated.View>
+                          );
+                        });
+                      })()}
+                    </Animated.ScrollView>
+                  </View>
+                ) : (
+                  <View style={[styles.engagementContainer, { borderColor: themeColor + '20' }]}>
+                    <Text style={[styles.engagementTitle, { color: themeColor }]}>PREPARATION</Text>
+                    <Text style={styles.engagementText}>
+                      Optimizing secure playback tunnels...
+                    </Text>
+                  </View>
+                )}
+                
+                <Text style={styles.loadingStatusText}>
+                  {isPlayerReady ? 'Starting playback...' : 'Optimizing connection speed...'}
+                </Text>
+              </View>
             </View>
           )}
-        </View>
+        </Animated.View>
       )}
 
       {/* Adventure Navigation Bar */}
@@ -931,16 +1882,176 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
   },
   loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
     backgroundColor: '#000000',
+    flexDirection: 'column',
     justifyContent: 'center',
     alignItems: 'center',
-    gap: Spacing.lg,
-    zIndex: 1000,
+    zIndex: 9999,
   },
   loadingText: {
     color: Colors.textMuted,
     fontSize: FontSizes.md,
+  },
+  loadingTitle: {
+    color: '#fff',
+    fontSize: FontSizes.lg,
+    fontWeight: 'bold',
+    marginBottom: 2,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  loadingSubtitle: {
+    color: 'rgba(255,255,255,0.6)',
+    fontSize: FontSizes.md,
+    marginTop: 4,
+    textAlign: 'center',
+  },
+  loadingTagline: {
+    color: 'rgba(255,255,255,0.45)',
+    fontSize: FontSizes.sm,
+    fontStyle: 'italic',
+    marginTop: 8,
+    textAlign: 'center',
+    paddingHorizontal: 20,
+  },
+  castContainer: {
+    alignItems: 'center',
+    marginTop: 12,
+    backgroundColor: 'rgba(13, 13, 22, 0.75)',
+    paddingVertical: 12,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    width: '95%',
+    height: 350, // Expanded to 350 to perfectly fit 3 rows of cast members with names/roles!
+  },
+  castTitle: {
+    color: '#8b5cf6',
+    fontSize: 9,
+    fontWeight: 'bold',
+    letterSpacing: 2,
+    marginBottom: 10,
+  },
+  scrollView: {
+    width: '100%',
+  },
+  actorsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'flex-start',
+    width: '100%',
+    paddingHorizontal: 4,
+  },
+  actorCard: {
+    alignItems: 'center',
+    width: '30%',
+    marginHorizontal: '1.5%',
+    marginBottom: 12,
+  },
+  actorImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.05)',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 4,
+  },
+  actorPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.15)',
+    marginBottom: 4,
+  },
+  actorName: {
+    color: '#fff',
+    fontSize: 8,
+    fontWeight: 'bold',
+    textAlign: 'center',
+    width: '100%',
+  },
+  actorCharacter: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 7,
+    textAlign: 'center',
+    width: '100%',
+    marginTop: 1,
+  },
+  progressBarBg: {
+    width: '85%',
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 3,
+    marginTop: 22,
+    marginBottom: 18,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.04)',
+  },
+  progressBarFill: {
+    height: '100%',
+    borderRadius: 3,
+    overflow: 'hidden',
+  },
+  engagementContainer: {
+    alignItems: 'center',
+    marginTop: 16,
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(13, 13, 22, 0.75)',
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    width: '90%',
+  },
+  engagementTitle: {
+    color: '#8b5cf6',
+    fontSize: 10,
+    fontWeight: 'bold',
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
+  engagementText: {
+    color: '#fff',
+    fontSize: FontSizes.sm,
+    textAlign: 'center',
+  },
+  loadingStatusText: {
+    color: 'rgba(255,255,255,0.3)',
+    fontSize: FontSizes.xs,
+    marginTop: 16,
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  loadingThumbContainer: {
+    width: 140,
+    height: 210,
+    borderRadius: 12,
+    marginBottom: 24,
+    borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.18)',
+    overflow: 'hidden',
+    elevation: 12,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.45,
+    shadowRadius: 15,
+  },
+  loadingThumb: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
   },
   webview: {
     flex: 1,

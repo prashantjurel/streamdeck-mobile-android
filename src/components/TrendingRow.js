@@ -35,7 +35,7 @@ const SkeletonPoster = () => {
   );
 };
 
-const TrendingRow = ({title, subtitle, movies = [], isLoading = false, onMoviePress, style, onTitlePress, showChevron, titleExtra}) => {
+const TrendingRow = ({title, subtitle, movies = [], isLoading = false, onMoviePress, style, onTitlePress, showChevron, titleExtra, watchlist, onAddToList}) => {
   const [filter, setFilter] = useState('movie');
 
   const filteredMovies = (movies || []).filter(m => {
@@ -125,6 +125,8 @@ const TrendingRow = ({title, subtitle, movies = [], isLoading = false, onMoviePr
             ) : (
               <PosterCard 
                 movie={item} 
+                isSaved={watchlist ? watchlist.some(w => w.id === item.id) : undefined}
+                onAddToList={onAddToList}
                 onPress={(m) => {
                   console.log('[TrendingRow] PosterCard onPress fired!', m?.title || m?.name);
                   if (onMoviePress) onMoviePress(m);
