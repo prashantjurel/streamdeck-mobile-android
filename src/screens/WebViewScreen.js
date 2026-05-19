@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   ActivityIndicator,
   StatusBar,
+  ScrollView,
   BackHandler,
   NativeModules,
   NativeEventEmitter,
@@ -39,6 +40,9 @@ const WebViewScreen = ({navigation, route}) => {
   const webViewRef = useRef(null);
   const eventEmitterRef = useRef(null);
   
+  // Detect live sports — no cinematic loader, no continue watching
+  const isLiveSports = type === 'live_sports';
+
   const [isFullscreen, setIsFullscreen] = useState(type === 'direct_engine' || type === 'moviebox');
   const [loading, setLoading] = useState(true);
   const [isPiPState, setIsPiPState] = useState(false);
@@ -58,9 +62,10 @@ const WebViewScreen = ({navigation, route}) => {
   ).current;
   const scrollViewRef = useRef(null);
   
-  const [isPlayerReady, setIsPlayerReady] = useState(false);
-  const [isLoaderVisible, setIsLoaderVisible] = useState(true);
-  const loaderOpacity = useRef(new Animated.Value(1)).current;
+  // For live sports, skip the loader entirely
+  const [isPlayerReady, setIsPlayerReady] = useState(isLiveSports ? true : false);
+  const [isLoaderVisible, setIsLoaderVisible] = useState(isLiveSports ? false : true);
+  const loaderOpacity = useRef(new Animated.Value(isLiveSports ? 0 : 1)).current;
   const [errorDetails, setErrorDetails] = useState(null);
 
   // Handle lazy resolution of Direct Engine to avoid UI freezes
@@ -96,8 +101,9 @@ const WebViewScreen = ({navigation, route}) => {
 
   // Initial Continue Watching entry creation — register immediately but with
   // resumeTime-aware progress so it doesn't reset to 1% on re-entry
+  // Skip for live sports — they are not shows or movies
   useEffect(() => {
-    if (tmdbId) {
+    if (tmdbId && !isLiveSports) {
       console.log('[WebView] Registering initial Continue Watching entry for:', title);
       try {
         // If resuming, preserve existing progress estimate; otherwise start at 0.5%
@@ -138,7 +144,8 @@ const WebViewScreen = ({navigation, route}) => {
           }
 
           // Re-update CW entry with high-resolution thumbnail only (preserve existing progress)
-          if (tmdbId) {
+          // Skip for live sports
+          if (tmdbId && !isLiveSports) {
             try {
               addContinueWatchingEntry({
                 tmdbId,
@@ -172,20 +179,10 @@ const WebViewScreen = ({navigation, route}) => {
     }
   }, [tmdbId, mediaType]);
 
-  // Synchronized scroll listener
-  useEffect(() => {
-    const listener = progressWidth.addListener(({ value }) => {
-      if (scrollViewRef.current && value > 40) {
-        // Value goes from 40 to 90. Map it to scroll down slowly
-        const maxScroll = 120; 
-        const scrollPos = ((value - 40) / 50) * maxScroll;
-        scrollViewRef.current.scrollTo({ y: Math.max(0, scrollPos), animated: true });
-      }
-    });
-    return () => progressWidth.removeListener(listener);
-  }, []);
+  // NOTE: Auto-scroll removed — it was fighting user manual scrolling.
+  // Cast section is now freely scrollable by the user.
 
-  // Animated Progress Bar logic
+  // Animated Progress Bar logic — single smooth curve instead of phased jumps
   useEffect(() => {
     let timer;
     if (!isPlayerReady) {
@@ -193,27 +190,14 @@ const WebViewScreen = ({navigation, route}) => {
       loaderOpacity.setValue(1);
       progressWidth.setValue(0);
       
-      // Multi-phase sequence: Snappy initial load, smooth decel, and synchronized slow creep
-      Animated.sequence([
-        Animated.timing(progressWidth, {
-          toValue: 60,
-          duration: 1500,
-          easing: Easing.out(Easing.quad),
-          useNativeDriver: false,
-        }),
-        Animated.timing(progressWidth, {
-          toValue: 90,
-          duration: 4500,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: false,
-        }),
-        Animated.timing(progressWidth, {
-          toValue: 98,
-          duration: 6000, // 6 seconds slow creep (perfectly synced with the safety timeout!)
-          easing: Easing.linear,
-          useNativeDriver: false,
-        })
-      ]).start();
+      // Single smooth animation from 0→95 over 12s with decelerating curve
+      // This eliminates the visible "stuck at phase boundary" jumps
+      Animated.timing(progressWidth, {
+        toValue: 95,
+        duration: 12000,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start();
     } else {
       // 1. Synchronously stop any active progress animations (avoiding async callback bugs)
       progressWidth.stopAnimation();
@@ -432,8 +416,8 @@ const WebViewScreen = ({navigation, route}) => {
       const rawCurrentTime = data.currentTime ?? data.time ?? data.seconds ?? data.data?.currentTime ?? data.data?.time ?? data.data?.seconds;
       const rawDuration = data.duration ?? data.totalTime ?? data.total_time ?? data.data?.duration ?? data.data?.totalTime;
       
-      // 2. CineSrc & General Engine Handlers
-      const isDirectReady = data.type === 'cinesrc:ready' || data.type === 'cinesrc:loadedmetadata' || rawEvent === 'sdm:video_ready' || data.type === 'rive:ready' || data.type === 'cinesrc:pulse_spoofed';
+      // 2. CineSrc & General Engine Handlers + secondary playback detection signal
+      const isDirectReady = data.type === 'cinesrc:ready' || data.type === 'cinesrc:loadedmetadata' || rawEvent === 'sdm:video_ready' || rawEvent === 'sdm:playback_started' || data.type === 'rive:ready' || data.type === 'cinesrc:pulse_spoofed';
       
       if (isDirectReady || (!isDirectEngine && !isMovieBox && (rawEvent === 'ready' || rawEvent === 'player_ready' || rawEvent === 'video_playing'))) {
         console.log('[WebView] CineSrc Engine Ready Triggered! hasSeeked:', hasSeekedRef.current);
@@ -902,6 +886,8 @@ const WebViewScreen = ({navigation, route}) => {
                 
                 v.addEventListener('play', function() {
                   hasStartedOnce = true;
+                  // Signal to React Native that actual video playback has started
+                  safePostMessage(JSON.stringify({ event: 'sdm:playback_started' }));
                 });
               }
 
@@ -1246,9 +1232,11 @@ const WebViewScreen = ({navigation, route}) => {
             const frames = doc.querySelectorAll('iframe');
             frames.forEach(f => {
               try {
-                // Remove sandbox restrictions that break inner players
-                if (f.hasAttribute('sandbox')) {
-                  console.log('[WebView] Stripping sandbox attribute from iframe:', f.src);
+                // Remove sandbox restrictions ONLY from engine player iframes (not all iframes)
+                var iframeSrc = (f.src || '').toLowerCase();
+                var isEngineIframe = iframeSrc.includes('cinesrc') || iframeSrc.includes('rive') || iframeSrc.includes('vidsrc') || iframeSrc.includes('embed') || iframeSrc.includes('vidplay');
+                if (f.hasAttribute('sandbox') && isEngineIframe) {
+                  console.log('[WebView] Stripping sandbox attribute from engine iframe:', f.src);
                   f.removeAttribute('sandbox');
                 }
 
@@ -1668,11 +1656,11 @@ const WebViewScreen = ({navigation, route}) => {
                 {metadata?.credits && (metadata.credits.cast?.length > 0 || metadata.credits.crew?.length > 0) ? (
                   <View style={[styles.castContainer, { borderColor: themeColor + '20' }]}>
                     <Text style={[styles.castTitle, { color: themeColor }]}>STARRING & CREATIVE TEAM</Text>
-                    <Animated.ScrollView 
-                      ref={scrollViewRef}
+                    <ScrollView 
                       style={styles.scrollView}
                       contentContainerStyle={styles.actorsGrid}
-                      showsVerticalScrollIndicator={false}
+                      showsVerticalScrollIndicator={true}
+                      nestedScrollEnabled={true}
                     >
                       {(() => {
                         const director = metadata.credits.crew?.find(c => c.job === 'Director');
@@ -1739,7 +1727,7 @@ const WebViewScreen = ({navigation, route}) => {
                           );
                         });
                       })()}
-                    </Animated.ScrollView>
+                    </ScrollView>
                   </View>
                 ) : (
                   <View style={[styles.engagementContainer, { borderColor: themeColor + '20' }]}>
@@ -1929,12 +1917,13 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.06)',
-    width: '95%',
-    height: 350, // Expanded to 350 to perfectly fit 3 rows of cast members with names/roles!
+    width: '100%',
+    flex: 1, // Fill remaining bottom screen space
+    minHeight: 300,
   },
   castTitle: {
     color: '#8b5cf6',
-    fontSize: 9,
+    fontSize: 11,
     fontWeight: 'bold',
     letterSpacing: 2,
     marginBottom: 10,
@@ -1956,38 +1945,38 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   actorImage: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.05)',
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.15)',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   actorPlaceholder: {
-    width: 48,
-    height: 48,
-    borderRadius: 24,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: 'rgba(255,255,255,0.1)',
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 1.5,
     borderColor: 'rgba(255,255,255,0.15)',
-    marginBottom: 4,
+    marginBottom: 6,
   },
   actorName: {
     color: '#fff',
-    fontSize: 8,
+    fontSize: 12,
     fontWeight: 'bold',
     textAlign: 'center',
     width: '100%',
   },
   actorCharacter: {
     color: 'rgba(255,255,255,0.5)',
-    fontSize: 7,
+    fontSize: 10,
     textAlign: 'center',
     width: '100%',
-    marginTop: 1,
+    marginTop: 2,
   },
   progressBarBg: {
     width: '85%',

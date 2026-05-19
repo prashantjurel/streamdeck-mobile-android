@@ -148,9 +148,20 @@ export async function toggleWatchlistItem(movie) {
   const items = await loadWatchlist();
   const idx = items.findIndex(i => i.id === movie.id);
   if (idx >= 0) {
+    // REMOVING: Record a deletion tombstone so sync doesn't re-add it
     items.splice(idx, 1);
+    try {
+      const deletedRaw = await AsyncStorage.getItem('streamdeck_deleted_watchlist');
+      let deletedList = deletedRaw ? JSON.parse(deletedRaw) : [];
+      deletedList = [{ id: movie.id, timestamp: Date.now() }, ...deletedList.filter(d => d.id !== movie.id)].slice(0, 50);
+      await AsyncStorage.setItem('streamdeck_deleted_watchlist', JSON.stringify(deletedList));
+      console.log(`[Storage] Watchlist removal tombstone recorded for: ${movie.title || movie.name || movie.id}`);
+    } catch (e) {
+      console.warn('[Storage] Failed to track watchlist deletion:', e);
+    }
   } else {
-    items.unshift(movie);
+    // ADDING: Stamp with addedAt so sync can compare against deletion timestamps
+    items.unshift({ ...movie, addedAt: Date.now() });
   }
   await saveWatchlist(items);
   return items;

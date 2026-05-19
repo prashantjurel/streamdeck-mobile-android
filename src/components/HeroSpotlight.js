@@ -31,10 +31,7 @@ const CARD_HEIGHT = 520;
 const ANIM_DURATION = 1400;
 const AUTO_PLAY_MS = 8000;
 
-// ═══════════════════════════════════════════════════════════
-// BlinkingLiveBadge — Animated pulsing red badge
-// ═══════════════════════════════════════════════════════════
-const BlinkingLiveBadge = memo(() => {
+const BlinkingLiveBadge = memo(({ style }) => {
   const opacity = useSharedValue(1);
 
   useEffect(() => {
@@ -53,7 +50,7 @@ const BlinkingLiveBadge = memo(() => {
   }));
 
   return (
-    <Animated.View style={[styles.liveBadgeContainer, animatedStyle]}>
+    <Animated.View style={[styles.liveBadgeContainer, style, animatedStyle]}>
       <View style={styles.liveBadgeDot} />
       <Text style={styles.liveBadgeText}>LIVE</Text>
     </Animated.View>
@@ -78,12 +75,65 @@ const TeamLogo = memo(({ uri, initials }) => {
   );
 });
 
-// ═══════════════════════════════════════════════════════════
-// HeroCard — Reusable poster card for movies, series, live sports
-// The card IS the poster. Content bottom-aligned over gradient.
-// ═══════════════════════════════════════════════════════════
+// Team colors dictionary for World Cup matches
+const getTeamColors = (teamName) => {
+  if (!teamName) return { primary: '#FFD700', secondary: '#00E676' };
+  const name = teamName.toLowerCase().trim();
+  
+  if (name.includes('argenti')) return { primary: '#74ACDF', secondary: '#003087' };
+  if (name.includes('portug')) return { primary: '#E42518', secondary: '#118C4F' };
+  if (name.includes('brazil') || (name.includes('bra') && name.length === 3)) return { primary: '#FFDF00', secondary: '#009B3A' };
+  if (name.includes('german')) return { primary: '#FFFFFF', secondary: '#DD0000' };
+  if (name.includes('spain') || name.includes('esp')) return { primary: '#FFC400', secondary: '#C60B1E' };
+  if (name.includes('franc')) return { primary: '#002395', secondary: '#ED2939' };
+  if (name.includes('croat')) return { primary: '#FF0000', secondary: '#11457E' };
+  if (name.includes('engla')) return { primary: '#E21E26', secondary: '#0B1F3F' };
+  if (name.includes('norwa')) return { primary: '#BA0C2F', secondary: '#00205B' };
+  if (name.includes('mexic')) return { primary: '#006847', secondary: '#CE1126' };
+  if (name.includes('united states') || name.includes('usa') || name.includes('u.s.')) return { primary: '#002868', secondary: '#BF0A30' };
+  if (name.includes('canad')) return { primary: '#FF0000', secondary: '#FFFFFF' };
+  if (name.includes('nether')) return { primary: '#FF4F00', secondary: '#FFFFFF' };
+  if (name.includes('ital')) return { primary: '#004B87', secondary: '#CD212A' };
+  if (name.includes('saudi')) return { primary: '#006C35', secondary: '#FFFFFF' };
+  if (name.includes('japan')) return { primary: '#E10714', secondary: '#002E73' };
+  if (name.includes('seneg')) return { primary: '#FDEF42', secondary: '#00853F' };
+  if (name.includes('moroc')) return { primary: '#C1272D', secondary: '#006233' };
+  if (name.includes('austra')) return { primary: '#FFCD00', secondary: '#00008B' };
+  if (name.includes('belgi')) return { primary: '#FFD300', secondary: '#E30613' };
+  if (name.includes('switze')) return { primary: '#D52B1E', secondary: '#FFFFFF' };
+  if (name.includes('denma')) return { primary: '#C8102E', secondary: '#FFFFFF' };
+  if (name.includes('urugu')) return { primary: '#87CEEB', secondary: '#0038A8' };
+  if (name.includes('colomb')) return { primary: '#FCD116', secondary: '#003893' };
+  if (name.includes('austri')) return { primary: '#ED2939', secondary: '#FFFFFF' };
+  if (name.includes('peru')) return { primary: '#D91414', secondary: '#FFFFFF' };
+  if (name.includes('nigeri')) return { primary: '#008751', secondary: '#FFFFFF' };
+  if (name.includes('hondur')) return { primary: '#0073CF', secondary: '#FFFFFF' };
+  if (name.includes('costa')) return { primary: '#CE1126', secondary: '#002B7F' };
+  if (name.includes('congo') || name.includes('dr congo')) return { primary: '#007FFF', secondary: '#FDD017' };
+  if (name.includes('ghana')) return { primary: '#FFD300', secondary: '#E30613' };
+  if (name.includes('panam')) return { primary: '#0051BA', secondary: '#DA121A' };
+  if (name.includes('qatar')) return { primary: '#8A1538', secondary: '#FFFFFF' };
+  if (name.includes('algeri')) return { primary: '#006633', secondary: '#D21034' };
+  if (name.includes('ecuad')) return { primary: '#FFDD00', secondary: '#002F6C' };
+  if (name.includes('south africa') || name.includes('rsa')) return { primary: '#007A4D', secondary: '#DE3831' };
+  if (name.includes('south korea') || name.includes('kor')) return { primary: '#CD2E3A', secondary: '#0047A0' };
+  if (name.includes('wales')) return { primary: '#D41E24', secondary: '#00AD43' };
+  if (name.includes('chile')) return { primary: '#0039A6', secondary: '#D52B1E' };
+  if (name.includes('polan')) return { primary: '#DC143C', secondary: '#FFFFFF' };
+  if (name.includes('uzbek')) return { primary: '#0099B5', secondary: '#1EB940' };
+  if (name.includes('turke') || name.includes('türki')) return { primary: '#E30A17', secondary: '#FFFFFF' };
+  if (name.includes('tunis')) return { primary: '#E30A17', secondary: '#FFFFFF' };
+  if (name.includes('czech')) return { primary: '#11457E', secondary: '#D7141A' };
+  if (name.includes('iraq')) return { primary: '#DA121A', secondary: '#007A3E' };
+  if (name.includes('jorda')) return { primary: '#DA121A', secondary: '#007A3E' };
+  if (name.includes('curac')) return { primary: '#002B7F', secondary: '#FDD017' };
+  if (name.includes('cabo') || name.includes('cape verde')) return { primary: '#002B7F', secondary: '#DA121A' };
+  
+  return { primary: '#FFD700', secondary: '#00E676' };
+};
+
 const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
-  const backdropUrl = getImageUrl(movie.backdrop_path, 'original');
+  const backdropUrl = typeof movie.backdrop_path === 'number' ? movie.backdrop_path : getImageUrl(movie.backdrop_path, 'original');
   const title = movie.title || movie.name || 'Unknown';
   const isSports = movie.isSports;
 
@@ -129,23 +179,66 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
 
   const metaParts = buildMeta();
 
+  const team1Colors = getTeamColors(movie.match?.team1);
+  const team2Colors = getTeamColors(movie.match?.team2);
+
+  const CardWrapper = movie.isWorldCup ? LinearGradient : View;
+  const wrapperProps = movie.isWorldCup ? {
+    colors: [team1Colors.primary, team2Colors.secondary, team2Colors.primary, team1Colors.secondary],
+    start: { x: 0, y: 0 },
+    end: { x: 1, y: 1 }
+  } : {};
+
+  const InnerWrapper = movie.isWorldCup ? TouchableOpacity : View;
+  const innerWrapperProps = movie.isWorldCup ? {
+    activeOpacity: 0.95,
+    onPress: () => onPlay(movie),
+    style: styles.wcHeroCardInner
+  } : {
+    style: { flex: 1, position: 'relative', overflow: 'hidden' }
+  };
+
   return (
-    <View style={styles.heroCard}>
-      {/* ── Full-bleed poster ────────────────────────── */}
+    <CardWrapper
+      style={[styles.heroCard, movie.isWorldCup && { padding: 2.5 }]}
+      {...wrapperProps}
+    >
+      <InnerWrapper {...innerWrapperProps}>
       <Image
         source={typeof currentBackdrop === 'string' ? { uri: currentBackdrop } : currentBackdrop}
         style={styles.poster}
         resizeMode="cover"
+        blurRadius={movie.isWorldCup ? 4 : 0}
         onError={() => {
           // If the primary image fails, use a high-quality sport-specific fallback
-          const fallback = isSports
-            ? (movie.match?.type === 'f1'
-              ? 'https://images.unsplash.com/photo-1551221281-224451000632?q=80&w=1200'
-              : 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=1200')
-            : 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1200';
-          setCurrentBackdrop({ uri: fallback });
+          const fallback = movie.isWorldCup
+            ? require('../assets/images/wc_bg.png')
+            : (isSports
+              ? (movie.match?.type === 'f1'
+                ? 'https://images.unsplash.com/photo-1551221281-224451000632?q=80&w=1200'
+                : 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200')
+              : 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1200');
+          setCurrentBackdrop(typeof fallback === 'number' ? fallback : { uri: fallback });
         }}
       />
+
+      {/* Dimming overlay on top of the poster image */}
+      <View style={[styles.posterDimmer, movie.isWorldCup && styles.wcPosterDimmer]} />
+
+      {/* Top Gradient Banner for World Cup Theme */}
+      {movie.isWorldCup && (
+        <LinearGradient
+          colors={['rgba(2, 44, 34, 0.95)', 'rgba(6, 78, 59, 0.8)', 'transparent']}
+          style={styles.wcHeroTopGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+        >
+          <View style={styles.wcHeroTopHeader}>
+            <Ionicons name="trophy" size={14} color="#FFD700" style={{ marginRight: 6 }} />
+            <Text style={styles.wcHeroTopTitle}>FIFA WORLD CUP 2026</Text>
+          </View>
+        </LinearGradient>
+      )}
 
       {/* ── Bottom gradient scrim for text readability ── */}
       <LinearGradient
@@ -163,8 +256,8 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
       />
 
       {/* ── Centered Team Logos for Sports ────────────────── */}
-      {/* Sports Logo Overlays (Hide for F1) */}
-      {isSports && movie.match?.type !== 'f1' && movie.match?.logo1 && movie.match?.logo2 && (
+      {/* Sports Logo Overlays (Hide for F1 or World Cup) */}
+      {isSports && !movie.isWorldCup && movie.match?.type !== 'f1' && movie.match?.logo1 && movie.match?.logo2 && (
         <View style={styles.centeredLogoStage}>
           <View style={styles.logoRow}>
             {movie.match.type === 'f1' ? (
@@ -188,11 +281,89 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
         </View>
       )}
 
+      {/* Centered Flags/Scores for World Cup */}
+      {isSports && movie.isWorldCup && (
+        <View style={styles.wcHeroCenteredContainer}>
+          {/* Faint Golden Trophy Watermark */}
+          <Ionicons
+            name="trophy"
+            size={180}
+            color="rgba(255, 215, 0, 0.05)"
+            style={styles.wcHeroWatermark}
+          />
+          {movie.match?.stage && (
+            <Text style={styles.wcHeroMatchStageText}>
+              {movie.match.stage.toUpperCase()}
+            </Text>
+          )}
+          <View style={styles.wcHeroLogoRow}>
+            {/* Left Team Column */}
+            <View style={styles.wcHeroTeamColumn}>
+              <View style={[styles.wcHeroFlagCircle, { borderColor: team1Colors.primary }]}>
+                <Text style={styles.wcHeroFlagEmoji}>{movie.match?.flag1 || movie.match?.logo1}</Text>
+              </View>
+              <Text style={[styles.wcHeroTeamName, { color: '#FFD700', position: 'absolute', top: 98 }]} numberOfLines={2}>
+                {movie.match?.team1}
+              </Text>
+            </View>
+            
+            {/* Center Score/VS */}
+            {movie.match?.status === 'LIVE' && movie.match?.score ? (
+              <View style={styles.wcHeroScoreBox}>
+                <Text style={styles.wcHeroScoreText}>{movie.match.score}</Text>
+              </View>
+            ) : (
+              <View style={styles.wcHeroVsBox}>
+                <Text style={styles.wcHeroVsText}>VS</Text>
+              </View>
+            )}
+
+            {/* Right Team Column */}
+            <View style={styles.wcHeroTeamColumn}>
+              <View style={[styles.wcHeroFlagCircle, { borderColor: team2Colors.primary }]}>
+                <Text style={styles.wcHeroFlagEmoji}>{movie.match?.flag2 || movie.match?.logo2}</Text>
+              </View>
+              <Text style={[styles.wcHeroTeamName, { color: '#FFD700', position: 'absolute', top: 98 }]} numberOfLines={2}>
+                {movie.match?.team2}
+              </Text>
+            </View>
+          </View>
+        </View>
+      )}
+
       {/* ── Bottom-aligned content ─────────────────────── */}
       <View style={styles.contentOverlay}>
         {/* Left: tag + title + meta */}
         <View style={styles.textCol}>
-          {isSports ? (
+          {movie.isWorldCup ? (
+            <View style={styles.wcHeroBadgeContainer}>
+              <LinearGradient
+                colors={['#022c22', '#064e3b']}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={styles.wcHeroBadgeGradient}
+              >
+                <Text style={styles.wcHeroBadgeText}>FIFA WORLD CUP 2026</Text>
+              </LinearGradient>
+              {!movie.isWorldCupPromo && (
+                movie.match?.status === 'soon' ? (
+                  <View style={[styles.trendingBadge, { marginLeft: 6, marginBottom: 0 }]}>
+                    <LinearGradient
+                      colors={['#f59e0b', '#d97706']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.trendingGradient}
+                    >
+                      <Ionicons name="time" size={10} color="#fff" style={{ marginRight: 4 }} />
+                      <Text style={styles.trendingText}>Starting Soon</Text>
+                    </LinearGradient>
+                  </View>
+                ) : (
+                  <BlinkingLiveBadge style={{ marginLeft: 6, marginBottom: 0 }} />
+                )
+              )}
+            </View>
+          ) : isSports ? (
             movie.match?.status === 'soon' ? (
               <View style={styles.trendingBadge}>
                 <LinearGradient
@@ -223,7 +394,11 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
           )}
 
           <Text
-            style={[styles.title, isSports && { fontSize: 24, lineHeight: 30 }]}
+            style={[
+              styles.title, 
+              isSports && { fontSize: 24, lineHeight: 30 },
+              movie.isWorldCup && { color: '#FFD700' }
+            ]}
             numberOfLines={isSports ? 3 : 2}
           >
             {title}
@@ -256,7 +431,8 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
           </TouchableOpacity>
         </View>
       </View>
-    </View>
+    </InnerWrapper>
+    </CardWrapper>
   );
 });
 
@@ -514,6 +690,7 @@ const styles = StyleSheet.create({
     right: -1,
     bottom: -1,
     height: '55%',
+    zIndex: 2,
   },
 
   // ── Content: pinned to bottom ───────────────────────
@@ -526,6 +703,7 @@ const styles = StyleSheet.create({
     alignItems: 'flex-end',
     paddingHorizontal: 20,
     paddingBottom: 24,
+    zIndex: 12,
   },
 
   // ── Text column (bottom-left) ───────────────────────
@@ -743,6 +921,189 @@ const styles = StyleSheet.create({
     width: 18,
     borderRadius: 3,
     backgroundColor: Colors.accentPurple,
+  },
+  wcHeroTopGradient: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    height: 90,
+    paddingTop: 16,
+    paddingHorizontal: 20,
+    zIndex: 11,
+  },
+  wcHeroTopHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  wcHeroTopTitle: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: '900',
+    letterSpacing: 1,
+    textShadowColor: 'rgba(0,0,0,0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  wcHeroCenteredContainer: {
+    position: 'absolute',
+    top: '30%',
+    left: 0,
+    right: 0,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+  },
+  wcHeroLogoRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 16,
+    zIndex: 2,
+    marginBottom: 48, // Space to accommodate up to 2 wrapped lines of team names
+  },
+  wcHeroFlagCircle: {
+    width: 90,
+    height: 90,
+    borderRadius: 45,
+    backgroundColor: '#FFFFFF', // Solid white backdrop so flags stand out clearly
+    borderWidth: 3,
+    borderColor: '#FFD700',
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.6,
+    shadowRadius: 10,
+    elevation: 12,
+    overflow: 'hidden',
+  },
+  wcHeroFlagEmoji: {
+    fontSize: 56,
+    width: 90,
+    height: 90,
+    lineHeight: 90,
+    textAlign: 'center',
+    textAlignVertical: 'center',
+    includeFontPadding: false,
+  },
+  wcHeroVsBox: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#1E1E1E', // Slick dark scorecard design
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+  },
+  wcHeroVsText: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  wcHeroScoreBox: {
+    backgroundColor: '#1E1E1E', // Slick dark scorecard design
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    elevation: 10,
+    minWidth: 70,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 5,
+  },
+  wcHeroScoreText: {
+    color: '#fff',
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+  wcHeroTeamColumn: {
+    alignItems: 'center',
+    width: 110, // Increased width for wrapping team name text
+  },
+  wcHeroTeamName: {
+    color: '#fff',
+    fontSize: 15, // Highly readable size for long country name wrapping
+    fontWeight: '900',
+    textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
+    marginTop: 8,
+    width: 110, // Increased width
+  },
+  wcHeroBadgeContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 8,
+    gap: 8,
+  },
+  wcHeroBadgeGradient: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
+  },
+  wcHeroBadgeText: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  wcHeroCardBorder: {
+    borderWidth: 2,
+    borderColor: '#FFD700',
+    backgroundColor: '#022c22',
+  },
+  wcHeroWatermark: {
+    position: 'absolute',
+    alignSelf: 'center',
+    top: -45,
+    zIndex: 1,
+  },
+  posterDimmer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    zIndex: 1,
+  },
+  wcPosterDimmer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+  },
+  wcHeroCardInner: {
+    flex: 1,
+    borderRadius: 18.5,
+    backgroundColor: '#022c22',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+  wcHeroMatchStageText: {
+    color: '#FFD700',
+    fontSize: 15, // Bigger match group/stage title
+    fontWeight: '900',
+    letterSpacing: 2, // Bold letter spacing
+    textAlign: 'center',
+    marginBottom: 16,
+    textShadowColor: 'rgba(0,0,0,0.9)',
+    textShadowOffset: { width: 0, height: 2 },
+    textShadowRadius: 4,
   },
 });
 

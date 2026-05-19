@@ -46,7 +46,7 @@ import SeriesPickerModal from '../components/SeriesPickerModal';
 import MediaProviderModal from '../components/MediaProviderModal';
 import { loadSettings, loadContinueWatching, isDirectEngineEnabled, loadWatchlist, toggleWatchlistItem, loadDefaultProvider, saveDefaultProvider } from '../utils/storage';
 
-import { fetchLiveSportsData } from '../services/sports';
+import { fetchLiveSportsData, fetchWorldCupData } from '../services/sports';
 import { useApi } from '../context/ApiContext';
 import { getCurrentUser, onAuthStateChanged } from '../services/auth';
 import { syncWithCloud } from '../services/sync';
@@ -410,6 +410,7 @@ const HomeScreen = ({ navigation }) => {
       const sportsTask = (async () => {
         setLoadingSports(true);
         try {
+          // Fetch general sports matches
           const matches = await fetchLiveSportsData();
           const preferredLeagues = ['ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'];
           let topLiveMatches = matches.filter(m => {
@@ -447,9 +448,63 @@ const HomeScreen = ({ navigation }) => {
             };
           });
 
-          setHeroItems(prev => [...heroSports, ...prev.filter(item => !item.isSports)]);
+          // Fetch World Cup matches
+          let wcMatches = [];
+          try {
+            wcMatches = await fetchWorldCupData();
+          } catch (wcErr) {
+            console.error('[Home] Fetch World Cup failed:', wcErr);
+          }
+
+          const nowTime = new Date();
+
+          // Filter World Cup matches (LIVE or UPCOMING within 30 minutes)
+          const activeWcMatches = [];
+          wcMatches.forEach(match => {
+            const mTime = new Date(match.rawDate).getTime();
+            const diffMins = (mTime - nowTime.getTime()) / (1000 * 60);
+            
+            let currentStatus = match.status;
+            if (currentStatus === 'UPCOMING' && diffMins > 0 && diffMins <= 30) {
+              currentStatus = 'soon';
+            }
+            
+            if (currentStatus === 'LIVE' || currentStatus === 'soon') {
+              activeWcMatches.push({
+                ...match,
+                status: currentStatus
+              });
+            }
+          });
+
+          // Map active World Cup matches to HeroSpotlight format
+          const heroWcSports = activeWcMatches.map(match => {
+            return {
+              id: `wc-${match.team1}-${match.team2}`,
+              title: `${match.team1} vs ${match.team2}`,
+              vote_average: 10.0,
+              release_date: match.rawDate,
+              overview: match.status === 'soon' ? `FIFA WORLD CUP • STARTING SOON • ${match.venue}` : `FIFA WORLD CUP • LIVE • ${match.venue}`,
+              isSports: true,
+              isWorldCup: true,
+              match: {
+                ...match,
+                title: `${match.team1} vs ${match.team2}`,
+                type: 'football',
+                logo1: match.flag1,
+                logo2: match.flag2,
+                quickAccessName: 'Football'
+              },
+              backdrop_path: require('../assets/images/wc_bg.png'), // Premium local World Cup backdrop
+              media_type: 'sport'
+            };
+          });
+
+          const combinedSports = [...heroWcSports, ...heroSports];
+
+          setHeroItems(prev => [...combinedSports, ...prev.filter(item => !item.isSports)]);
           setLoadingSports(false);
-          return heroSports;
+          return combinedSports;
         } catch (e) {
           console.error('[Home] Sports load failed:', e);
           setLoadingSports(false);
@@ -599,6 +654,11 @@ const HomeScreen = ({ navigation }) => {
   // ── ▶ Button: Show where to stream ───────────────────
   const handlePlayPress = async (movie, forcedEpisode = null) => {
     if (!movie) return;
+
+    if (movie.isWorldCup || movie.id === 'wc-2026-promo-banner' || movie.isWorldCupPromo) {
+      navigation.navigate('LiveTV', { expandWorldCup: true });
+      return;
+    }
     
     const title = movie.title || movie.name || 'Movie';
     // Robust detection: if it has first_air_date or is explicitly 'tv', it's a series
@@ -999,6 +1059,55 @@ const HomeScreen = ({ navigation }) => {
             </TouchableOpacity>
           </View>
         </View>
+
+        {/* World Cup 2026 Promo Banner */}
+        {(selectedMediaType === 'all' || selectedMediaType === 'live') && (
+          <TouchableOpacity
+            style={styles.wcBannerContainer}
+            activeOpacity={0.85}
+            onPress={() => navigation.navigate('LiveTV', { expandWorldCup: true })}
+          >
+            <LinearGradient
+              colors={['#FFD700', '#0047A0', '#EF4444', '#10B981']} // Gold, USA Blue, Canada Red, Mexico Green
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.wcBannerGradientBorder}
+            >
+              <View style={styles.wcBannerInner}>
+                <Image
+                  source={require('../assets/images/wc_bg.png')}
+                  style={[StyleSheet.absoluteFill, styles.wcBannerBackdrop]}
+                  resizeMode="cover"
+                  blurRadius={4}
+                />
+                <View style={[StyleSheet.absoluteFill, styles.wcBannerOverlay]} />
+                
+                <View style={styles.wcBannerContent}>
+                  <View style={styles.wcBannerLeft}>
+                    <View style={styles.wcBannerBadge}>
+                      <Ionicons name="trophy" size={12} color="#FFD700" style={{ marginRight: 4 }} />
+                      <Text style={styles.wcBannerBadgeText}>FIFA WORLD CUP 2026</Text>
+                    </View>
+                    <Text style={styles.wcBannerTitle}>Road to 2026</Text>
+                    <Text style={styles.wcBannerSubtitle}>USA • Canada • Mexico</Text>
+                  </View>
+                  
+                  <View style={styles.wcBannerRight}>
+                    <LinearGradient
+                      colors={['#FFD700', '#FFA500']}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                      style={styles.wcBannerBtn}
+                    >
+                      <Text style={styles.wcBannerBtnText}>VIEW ALL</Text>
+                      <Ionicons name="chevron-forward" size={12} color="#000" />
+                    </LinearGradient>
+                  </View>
+                </View>
+              </View>
+            </LinearGradient>
+          </TouchableOpacity>
+        )}
 
         {/* Category Filter */}
         <ScrollView
@@ -1442,9 +1551,6 @@ const styles = StyleSheet.create({
   },
   bottomPadding: {
     height: 100,
-  },
-  categoryScroll: {
-    marginBottom: Spacing.xl,
   },
   headerRow: {
     flexDirection: 'row',
@@ -2108,6 +2214,103 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 7,
     fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  wcBannerContainer: {
+    marginHorizontal: 20,
+    marginBottom: 16,
+    borderRadius: 16,
+    overflow: 'hidden',
+    elevation: 10,
+    shadowColor: '#FFD700',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+  },
+  wcBannerGradientBorder: {
+    padding: 2.2, // Border gradient outline
+    borderRadius: 16,
+  },
+  wcBannerInner: {
+    height: 100,
+    borderRadius: 13.8,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: '#022c22',
+  },
+  wcBannerBackdrop: {
+    width: '100%',
+    height: '100%',
+    opacity: 0.6,
+  },
+  wcBannerOverlay: {
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+  },
+  wcBannerContent: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 16,
+    zIndex: 2,
+  },
+  wcBannerLeft: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  wcBannerBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 215, 0, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+    borderWidth: 0.5,
+    borderColor: 'rgba(255, 215, 0, 0.3)',
+    marginBottom: 6,
+  },
+  wcBannerBadgeText: {
+    color: '#FFD700',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 1,
+  },
+  wcBannerTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+    textShadowColor: 'rgba(0, 0, 0, 0.95)',
+    textShadowOffset: { width: 0, height: 1.5 },
+    textShadowRadius: 4,
+  },
+  wcBannerSubtitle: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    fontWeight: '800',
+    marginTop: 2,
+    textShadowColor: 'rgba(0, 0, 0, 0.9)',
+    textShadowOffset: { width: 0, height: 1.5 },
+    textShadowRadius: 3,
+  },
+  wcBannerRight: {
+    justifyContent: 'center',
+    alignItems: 'flex-end',
+  },
+  wcBannerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 10,
+    elevation: 4,
+  },
+  wcBannerBtnText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '900',
+    marginRight: 2,
     letterSpacing: 0.5,
   },
 });

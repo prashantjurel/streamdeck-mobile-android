@@ -355,3 +355,147 @@ export async function fetchLiveSportsData() {
     return [];
   }
 }
+
+const COUNTRY_FLAGS = {
+  'Mexico': '🇲🇽', 'South Africa': '🇿🇦', 'Sweden': '🇸🇪', 'Ecuador': '🇪🇨',
+  'England': '🏴󠁧󠁢󠁥󠁮󠁧󠁿', 'South Korea': '🇰🇷', 'Spain': '🇪🇸', 'Morocco': '🇲🇦',
+  'Argentina': '🇦🇷', 'Wales': '🏴󠁧󠁢󠁷󠁬󠁳󠁿', 'Japan': '🇯🇵', 'Senegal': '🇸🇳',
+  'France': '🇫🇷', 'Chile': '🇨🇱', 'Poland': '🇵🇱', 'Australia': '🇦🇺',
+  'Belgium': '🇧🇪', 'Canada': '🇨🇦', 'Algeria': '🇩🇿', 'Norway': '🇳🇴',
+  'Italy': '🇮🇹', 'Saudi Arabia': '🇸🇦', 'Colombia': '🇨🇴', 'Austria': '🇦🇹',
+  'Portugal': '🇵🇹', 'Peru': '🇵🇪', 'Nigeria': '🇳🇬', 'Switzerland': '🇨🇭',
+  'Netherlands': '🇳🇱', 'Honduras': '🇭🇳', 'Iran': '🇮🇷', 'Denmark': '🇩🇰',
+  'Germany': '🇩🇪', 'Ukraine': '🇺🇦', 'Uruguay': '🇺🇾', 'Egypt': '🇪🇬',
+  'Brazil': '🇧🇷', 'Turkey': '🇹🇷', 'Cameroon': '🇨🇲', 'Croatia': '🇭🇷',
+  'New Zealand': '🇳🇿', 'Tunisia': '🇹🇳', 'Costa Rica': '🇨🇷',
+  'Bosnia & Herz.': '🇧🇦', 'Czechia': '🇨🇿', 'United States': '🇺🇸',
+  'Paraguay': '🇵🇾', 'Côte d\'Ivoire': '🇨🇮', 'Curaçao': '🇨🇼', 'DR Congo': '🇨🇩',
+  'Uzbekistan': '🇺🇿', 'Ghana': '🇬🇭', 'Panama': '🇵🇦', 'Qatar': '🇶🇦',
+  'Scotland': '🏴󠁧󠁢󠁳󠁣󠁴󠁿', 'Haiti': '🇭🇹', 'Türkiye': '🇹🇷', 'Cabo Verde': '🇨🇻',
+  'Cape Verde': '🇨🇻', 'Ivory Coast': '🇨🇮', 'Czech Republic': '🇨🇿',
+  'Bosnia-Herzegovina': '🇧🇦', 'Bosnia & Herzegovina': '🇧🇦',
+  'Iraq': '🇮🇶', 'Jordan': '🇯🇴'
+};
+
+function formatIST(dateStr) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  
+  const options = {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true
+  };
+  
+  try {
+    const formatter = new Intl.DateTimeFormat('en-IN', options);
+    const parts = formatter.formatToParts(d);
+    
+    let month = '', day = '', year = '', hour = '', minute = '', dayPeriod = '';
+    for (const part of parts) {
+      if (part.type === 'month') month = part.value;
+      if (part.type === 'day') day = part.value;
+      if (part.type === 'year') year = part.value;
+      if (part.type === 'hour') hour = part.value;
+      if (part.type === 'minute') minute = part.value;
+      if (part.type === 'dayPeriod') dayPeriod = part.value.toUpperCase();
+    }
+    
+    return `${month} ${day}, ${year} • ${hour}:${minute} ${dayPeriod} IST`;
+  } catch (e) {
+    // Fallback if Intl is not fully supported
+    return d.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' });
+  }
+}
+
+const cleanFlagKey = (name) => {
+  if (!name) return '';
+  return name.toLowerCase().trim()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/\s+/g, ' ');
+};
+
+export function getCountryFlag(teamName) {
+  if (!teamName) return '🏳️';
+  const cleanName = cleanFlagKey(teamName);
+  
+  if (cleanName === 'usa') return '🇺🇸';
+  if (cleanName === 'united states') return '🇺🇸';
+  if (cleanName === 'cote d ivoire' || cleanName === 'cote divoire' || cleanName === 'ivory coast') return '🇨🇮';
+  if (cleanName === 'cabo verde' || cleanName === 'cape verde') return '🇨🇻';
+  if (cleanName === 'bosnia herzegovina' || cleanName === 'bosnia-herzegovina' || cleanName === 'bosnia herz') return '🇧🇦';
+  if (cleanName === 'dr congo' || cleanName === 'democratic republic of congo') return '🇨🇩';
+  
+  for (const key of Object.keys(COUNTRY_FLAGS)) {
+    if (cleanFlagKey(key) === cleanName) {
+      return COUNTRY_FLAGS[key];
+    }
+  }
+  
+  return '🏳️';
+}
+
+export async function fetchWorldCupData() {
+  try {
+    const res = await fetch('https://site.api.espn.com/apis/site/v2/sports/soccer/fifa.world/scoreboard?dates=20260611-20260720');
+    if (!res.ok) throw new Error('API failed');
+    const data = await res.json();
+    
+    const events = data.events || [];
+    const formattedMatches = events.map(m => {
+      const comp = m.competitions?.[0] || {};
+      const competitors = comp.competitors || [];
+      const home = competitors.find(c => c.homeAway === 'home') || {};
+      const away = competitors.find(c => c.homeAway === 'away') || {};
+      
+      const team1 = home.team?.displayName || 'TBA';
+      const team2 = away.team?.displayName || 'TBA';
+      
+      const flag1 = getCountryFlag(team1);
+      const flag2 = getCountryFlag(team2);
+      
+      const statusState = comp.status?.type?.state;
+      
+      let status = 'UPCOMING';
+      if (statusState === 'in' || statusState === 'live') {
+        status = 'LIVE';
+      } else if (statusState === 'post') {
+        status = 'FINISHED';
+      }
+      
+      const score = status !== 'UPCOMING' ? `${home.score || 0} - ${away.score || 0}` : null;
+      const notes = comp.notes || m.notes || [];
+      const stage = (notes && notes.length > 0) ? notes[0].headline : 'Group Stage';
+      
+      return {
+        team1,
+        flag1,
+        team2,
+        flag2,
+        date: formatIST(m.date),
+        rawDate: m.date,
+        venue: comp.venue?.displayName || comp.venue?.fullName || comp.venue?.address?.city || 'TBA',
+        status,
+        score,
+        homeScore: parseInt(home.score || '0', 10),
+        awayScore: parseInt(away.score || '0', 10),
+        stage,
+      };
+    });
+    
+    // Sort matches chronologically by rawDate
+    formattedMatches.sort((a, b) => new Date(a.rawDate) - new Date(b.rawDate));
+    
+    return formattedMatches;
+  } catch (e) {
+    console.error('Error fetching World Cup Data:', e);
+    return [];
+  }
+}
+

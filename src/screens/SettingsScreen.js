@@ -14,6 +14,7 @@ import {
   Image,
   ActivityIndicator,
   Modal,
+  Platform,
 } from 'react-native';
 import DeviceInfo from 'react-native-device-info';
 import AsyncStorage from '@react-native-async-storage/async-storage';
@@ -935,6 +936,9 @@ const SettingsScreen = ({ navigation }) => {
         {/* App Info */}
         <View style={styles.infoSection}>
           <Text style={styles.infoText}>StreamDeck Mobile v{DeviceInfo.getVersion()}</Text>
+          <Text style={[styles.infoText, { fontSize: 10, marginTop: 4, opacity: 0.5 }]}>
+            World Cup backdrop: oil painting via Easy-Peasy.AI
+          </Text>
         </View>
 
         <View style={{ height: 120 }} />

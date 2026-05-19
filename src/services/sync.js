@@ -15,13 +15,32 @@ export const syncWithCloud = async (userId) => {
     const snapshot = await get(userRef);
     const cloudData = snapshot.val() || {};
     
-    // 1. Watchlist Sync (Intelligent Two-Way Merge)
+    // 1. Watchlist Sync (Tombstone-Aware Two-Way Merge)
     const localWatchlist = await loadWatchlist();
     const cloudWatchlist = cloudData.watchlist 
       ? (typeof cloudData.watchlist === 'string' ? JSON.parse(cloudData.watchlist) : cloudData.watchlist) 
       : [];
     
-    // Merge by unique ID
+    // 1.0 Watchlist Deletion Tombstones — merge local + cloud
+    const localWLDeletedRaw = await AsyncStorage.getItem('streamdeck_deleted_watchlist');
+    const localWLDeleted = localWLDeletedRaw ? JSON.parse(localWLDeletedRaw) : [];
+    const cloudWLDeleted = cloudData.deletedWatchlist 
+      ? (typeof cloudData.deletedWatchlist === 'string' ? JSON.parse(cloudData.deletedWatchlist) : cloudData.deletedWatchlist) 
+      : [];
+    
+    const mergedWLDeletedMap = new Map();
+    [...cloudWLDeleted, ...localWLDeleted].forEach(d => {
+      if (d && d.id) {
+        const existing = mergedWLDeletedMap.get(d.id);
+        if (!existing || (d.timestamp || 0) > (existing.timestamp || 0)) {
+          mergedWLDeletedMap.set(d.id, d);
+        }
+      }
+    });
+    const finalWLDeleted = Array.from(mergedWLDeletedMap.values()).slice(0, 50);
+    await AsyncStorage.setItem('streamdeck_deleted_watchlist', JSON.stringify(finalWLDeleted));
+
+    // 1.1 Merge watchlist items by ID
     const mergedWatchlistMap = new Map();
     // Add cloud items first
     cloudWatchlist.forEach(item => {
@@ -32,7 +51,15 @@ export const syncWithCloud = async (userId) => {
       if (item && item.id) mergedWatchlistMap.set(item.id, item);
     });
     
-    const finalWatchlist = Array.from(mergedWatchlistMap.values());
+    // 1.2 APPLY DELETIONS: If a deletion tombstone is newer than the item's addedAt, remove it
+    const finalWatchlist = Array.from(mergedWatchlistMap.values()).filter(item => {
+      const deletion = mergedWLDeletedMap.get(item.id);
+      if (deletion && deletion.timestamp > (item.addedAt || 0)) {
+        console.log(`[Sync] Filtering out deleted watchlist item: ${item.title || item.name || item.id}`);
+        return false;
+      }
+      return true;
+    });
     await saveWatchlist(finalWatchlist);
     
     // 1.1 Continue Watching Sync (Timestamp-based Merge)
@@ -123,6 +150,7 @@ export const syncWithCloud = async (userId) => {
     // 5. PUSH THE PERFECT STATE (Use set() to forcefully overwrite entire node)
     const payload = {
       watchlist: finalWatchlist, // Push as native array/object
+      deletedWatchlist: finalWLDeleted, // Sync watchlist deletions across devices!
       continueWatching: cleanedCW, // Sync your playback history (filtered)
       deletedCW: finalDeleted, // Sync your deletions too!
       settings: strippedSettings, // Push as native object instead of string
