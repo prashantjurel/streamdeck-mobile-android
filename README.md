@@ -97,7 +97,7 @@ npx react-native run-android
 
 | Home Feed | Explore & Search | Live Sports |
 | :---: | :---: | :---: |
-| <img src="https://via.placeholder.com/250x500.png?text=Home+Feed" alt="Home Feed" width="200" /> | <img src="https://via.placeholder.com/250x500.png?text=Explore" alt="Explore" width="200" /> | <img src="https://via.placeholder.com/250x500.png?text=Live+Sports" alt="Live Sports" width="200" /> |
+| <img width="350" height="750" alt="Home Page" src="https://github.com/user-attachments/assets/f1699404-2a52-4d44-ab05-b6d2605d1ee6" /> | <img width="350" height="750" alt="Explore" src="https://github.com/user-attachments/assets/af792284-d54d-4a1d-bfbd-bc7cc02f87b5" /> | <img width="350" height="750" alt="Live Sports" src="https://github.com/user-attachments/assets/8af0e61a-8a6c-4dd3-acce-1bfe04357b84" /> |
 
 ---
 
