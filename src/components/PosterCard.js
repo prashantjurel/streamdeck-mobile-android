@@ -17,6 +17,8 @@ const {width: SCREEN_WIDTH} = Dimensions.get('window');
 const CARD_WIDTH = SCREEN_WIDTH * 0.28;
 const CARD_HEIGHT = CARD_WIDTH * 1.7;
 
+const POSTER_PLACEHOLDER = require('../assets/images/poster_placeholder.jpg');
+
 const PosterCard = ({movie, onPress, style, size = 'default', isSaved: externalIsSaved, onAddToList}) => {
   const [localIsSaved, setLocalIsSaved] = useState(false);
   const title = movie.title || movie.name || 'Unknown';
@@ -26,6 +28,14 @@ const PosterCard = ({movie, onPress, style, size = 'default', isSaved: externalI
   const posterUrl = getImageUrl(movie.poster_path);
   
   const isSaved = externalIsSaved !== undefined ? externalIsSaved : localIsSaved;
+  const [imageLoaded, setImageLoaded] = useState(false);
+  const [imageError, setImageError] = useState(false);
+
+  // Reset loading state when posterUrl changes
+  useEffect(() => {
+    setImageLoaded(false);
+    setImageError(false);
+  }, [posterUrl]);
 
   useEffect(() => {
     if (externalIsSaved === undefined) {
@@ -60,16 +70,30 @@ const PosterCard = ({movie, onPress, style, size = 'default', isSaved: externalI
       <View style={styles.cardInner}>
         {/* Poster Image */}
         <View style={styles.imageContainer}>
-          {posterUrl ? (
+          {/* Placeholder always rendered underneath */}
+          <Image
+            source={POSTER_PLACEHOLDER}
+            style={styles.poster}
+            resizeMode="cover"
+          />
+
+          {/* Title overlay on placeholder when no real image */}
+          {(!posterUrl || imageError) && (
+            <View style={styles.placeholderOverlay}>
+              <Text style={styles.placeholderIcon}>🎬</Text>
+              <Text style={styles.placeholderTitle} numberOfLines={3}>{title}</Text>
+            </View>
+          )}
+
+          {/* Actual poster — fades in once loaded */}
+          {posterUrl && !imageError && (
             <Image
               source={{uri: posterUrl}}
-              style={styles.poster}
+              style={[styles.poster, imageLoaded ? styles.posterVisible : styles.posterHidden]}
               resizeMode="cover"
+              onLoad={() => setImageLoaded(true)}
+              onError={() => setImageError(true)}
             />
-          ) : (
-            <View style={styles.placeholder}>
-              <Text style={styles.placeholderText}>🎬</Text>
-            </View>
           )}
         </View>
 
@@ -125,14 +149,35 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
-  placeholder: {
+  posterVisible: {
+    opacity: 1,
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+  },
+  posterHidden: {
+    opacity: 0,
+    position: 'absolute',
+    width: '100%',
+    height: '100%',
+  },
+  placeholderOverlay: {
     ...StyleSheet.absoluteFillObject,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: Colors.bgSecondary,
+    padding: 6,
+    backgroundColor: 'rgba(0,0,0,0.35)',
   },
-  placeholderText: {
-    fontSize: 32,
+  placeholderIcon: {
+    fontSize: 22,
+    marginBottom: 4,
+  },
+  placeholderTitle: {
+    fontSize: 9,
+    fontWeight: '700',
+    color: 'rgba(255,255,255,0.75)',
+    textAlign: 'center',
+    lineHeight: 12,
   },
   libraryBtn: {
     position: 'absolute',
@@ -166,7 +211,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     padding: Spacing.sm,
-    paddingTop: 20, // Space for gradient fade
+    paddingTop: 20,
     justifyContent: 'flex-end',
   },
   title: {

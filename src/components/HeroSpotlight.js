@@ -132,8 +132,14 @@ const getTeamColors = (teamName) => {
   return { primary: '#FFD700', secondary: '#00E676' };
 };
 
+const HERO_PLACEHOLDER = require('../assets/images/poster_placeholder.jpg');
+
 const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
-  const backdropUrl = typeof movie.backdrop_path === 'number' ? movie.backdrop_path : getImageUrl(movie.backdrop_path, 'original');
+  // Prefer backdrop (wide), fall back to poster (tall) if backdrop is missing.
+  // Some TMDB trending items omit backdrop_path — this prevents a permanent placeholder.
+  // Use w1280 (not original) — full-res JPEGs are 2-3MB and cause visible placeholder delay.
+  const rawPath = movie.backdrop_path || movie.poster_path || null;
+  const backdropUrl = typeof rawPath === 'number' ? rawPath : getImageUrl(rawPath, 'w1280');
   const title = movie.title || movie.name || 'Unknown';
   const isSports = movie.isSports;
 
@@ -171,10 +177,12 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
   };
 
   const [currentBackdrop, setCurrentBackdrop] = useState(backdropUrl);
+  const [backdropLoaded, setBackdropLoaded] = useState(false);
 
   // Sync state with prop whenever backdropUrl changes
   useEffect(() => {
     setCurrentBackdrop(backdropUrl);
+    setBackdropLoaded(false);
   }, [backdropUrl]);
 
   const metaParts = buildMeta();
@@ -204,11 +212,21 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
       {...wrapperProps}
     >
       <InnerWrapper {...innerWrapperProps}>
+      {/* Placeholder backdrop — always visible until real image loads */}
+      <Image
+        source={HERO_PLACEHOLDER}
+        style={[styles.poster, styles.heroPlaceholder]}
+        resizeMode="cover"
+        blurRadius={2}
+      />
+
+      {/* Actual backdrop — fades in on load */}
       <Image
         source={typeof currentBackdrop === 'string' ? { uri: currentBackdrop } : currentBackdrop}
-        style={styles.poster}
+        style={[styles.poster, backdropLoaded ? styles.heroBackdropVisible : styles.heroBackdropHidden]}
         resizeMode="cover"
         blurRadius={movie.isWorldCup ? 4 : 0}
+        onLoad={() => setBackdropLoaded(true)}
         onError={() => {
           // If the primary image fails, use a high-quality sport-specific fallback
           const fallback = movie.isWorldCup
@@ -219,6 +237,7 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
                 : 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200')
               : 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1200');
           setCurrentBackdrop(typeof fallback === 'number' ? fallback : { uri: fallback });
+          setBackdropLoaded(true);
         }}
       />
 
@@ -681,6 +700,20 @@ const styles = StyleSheet.create({
     left: 0,
     width: '100%',
     height: '100%',
+  },
+
+  // ── Placeholder shown while real backdrop loads ──────
+  heroPlaceholder: {
+    zIndex: 0,
+    opacity: 1,
+  },
+  heroBackdropVisible: {
+    zIndex: 1,
+    opacity: 1,
+  },
+  heroBackdropHidden: {
+    zIndex: 1,
+    opacity: 0,
   },
 
   // ── Bottom gradient — rich cinematic scrim ──────────

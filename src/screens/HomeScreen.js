@@ -391,6 +391,12 @@ const HomeScreen = ({ navigation }) => {
         setHeroItems(prev => [...prev.filter(item => item.isSports), ...global.slice(0, 8)]);
         setLoading(false); // Can hide global skeleton once first major section is ready
         return { global, local };
+      }).catch(error => {
+        if (error.message === 'INVALID_API_KEY') {
+          invalidateKey();
+        } else {
+          console.error('[Home] Failed to load trending content:', error);
+        }
       });
 
       // --- Task 3: Active Provider Content (CRITICAL) ---
@@ -410,30 +416,33 @@ const HomeScreen = ({ navigation }) => {
       const sportsTask = (async () => {
         setLoadingSports(true);
         try {
-          // Fetch general sports matches
-          const matches = await fetchLiveSportsData();
+          // Fetch general sports + World Cup in parallel — both are live data, no cache
+          const [matches, wcMatches] = await Promise.all([
+            fetchLiveSportsData().catch(e => { console.error('[Home] Sports fetch failed:', e); return []; }),
+            fetchWorldCupData().catch(e => { console.error('[Home] World Cup fetch failed:', e); return []; }),
+          ]);
+
+          // Filter to preferred leagues first, fallback to top 2 overall
           const preferredLeagues = ['ipl', 'la liga', 'premier league', 'champions league', 'bundesliga', 'serie a', 'india', 'indian', 'f1', 'formula'];
           let topLiveMatches = matches.filter(m => {
             const lowerTitle = m.title.toLowerCase();
             return (m.status === 'LIVE' || m.status === 'soon') && preferredLeagues.some(league => lowerTitle.includes(league));
           });
-          
-          // Fallback: If no preferred live matches, just show the top 2 overall live/soon/upcoming matches!
           if (topLiveMatches.length === 0) {
             topLiveMatches = matches.slice(0, 2);
           }
 
           const heroSports = topLiveMatches.slice(0, 3).map(match => {
             const lowerTitle = match.title.toLowerCase();
-            let backdrop = null;
-            if (match.backdrop) {
-              backdrop = match.backdrop;
-            } else if (lowerTitle.includes('ipl') || lowerTitle.includes('india') || match.type === 'cricket') {
-              backdrop = 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=600&auto=format&fit=crop';
-            } else if (match.type === 'football' || lowerTitle.includes('league') || lowerTitle.includes('liga') || lowerTitle.includes('serie')) {
-              backdrop = 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=600&auto=format&fit=crop';
-            } else if (match.type === 'f1' || lowerTitle.includes('f1') || lowerTitle.includes('formula')) {
-              backdrop = 'https://images.pexels.com/photos/36920232/pexels-photo-36920232.jpeg?auto=compress&cs=tinysrgb&w=1200';
+            let backdrop = match.backdrop || null;
+            if (!backdrop) {
+              if (lowerTitle.includes('ipl') || lowerTitle.includes('india') || match.type === 'cricket') {
+                backdrop = 'https://images.unsplash.com/photo-1540747913346-19e32dc3e97e?q=80&w=600&auto=format&fit=crop';
+              } else if (match.type === 'football' || lowerTitle.includes('league') || lowerTitle.includes('liga') || lowerTitle.includes('serie')) {
+                backdrop = 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=600&auto=format&fit=crop';
+              } else if (match.type === 'f1' || lowerTitle.includes('f1') || lowerTitle.includes('formula')) {
+                backdrop = 'https://images.pexels.com/photos/36920232/pexels-photo-36920232.jpeg?auto=compress&cs=tinysrgb&w=1200';
+              }
             }
             return {
               id: `sport-${match.id}`,
@@ -442,19 +451,12 @@ const HomeScreen = ({ navigation }) => {
               release_date: new Date().toISOString(),
               overview: match.status === 'soon' ? `STARTING SOON • Watch ${match.title}` : `LIVE NOW • Watch ${match.title}`,
               isSports: true,
-              match: match,
+              match,
               backdrop_path: backdrop,
-              media_type: 'sport'
+              media_type: 'sport',
             };
           });
 
-          // Fetch World Cup matches
-          let wcMatches = [];
-          try {
-            wcMatches = await fetchWorldCupData();
-          } catch (wcErr) {
-            console.error('[Home] Fetch World Cup failed:', wcErr);
-          }
 
           const nowTime = new Date();
 
@@ -495,12 +497,14 @@ const HomeScreen = ({ navigation }) => {
                 logo2: match.flag2,
                 quickAccessName: 'Football'
               },
-              backdrop_path: require('../assets/images/wc_bg.png'), // Premium local World Cup backdrop
+              backdrop_path: require('../assets/images/wc_bg.png'),
               media_type: 'sport'
             };
           });
 
           const combinedSports = [...heroWcSports, ...heroSports];
+
+
 
           setHeroItems(prev => [...combinedSports, ...prev.filter(item => !item.isSports)]);
           setLoadingSports(false);

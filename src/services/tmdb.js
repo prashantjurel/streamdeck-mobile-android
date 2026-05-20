@@ -7,6 +7,7 @@ export const TMDB_IMAGE_ORIGINAL = 'https://image.tmdb.org/t/p/original';
 export const TMDB_IMAGE_SMALL = 'https://image.tmdb.org/t/p/w200';
 
 const providerCache = {};
+const pendingRequests = {};
 
 /**
  * Fetch all watch providers for a specific region dynamically from TMDB.
@@ -20,26 +21,37 @@ export async function fetchRegionalProviders(region = 'IN') {
     return providerCache[upperRegion];
   }
 
-  try {
-    const res = await fetch(`${TMDB_BASE}/watch/providers/movie?api_key=${apiKey}&watch_region=${upperRegion}`);
-    const data = await res.json();
-    let providers = data.results || [];
-    
-    // If movies return nothing, try TV (rare but possible for some regions)
-    if (providers.length === 0) {
-      const tvRes = await fetch(`${TMDB_BASE}/watch/providers/tv?api_key=${apiKey}&watch_region=${upperRegion}`);
-      const tvData = await tvRes.json();
-      providers = tvData.results || [];
-    }
-
-    if (providers.length > 0) {
-      providerCache[upperRegion] = providers;
-    }
-    return providers;
-  } catch (e) {
-    console.error(`[TMDB] Failed to fetch providers for ${upperRegion}:`, e);
-    return [];
+  if (pendingRequests[upperRegion]) {
+    return pendingRequests[upperRegion];
   }
+
+  const fetchPromise = (async () => {
+    try {
+      const res = await fetch(`${TMDB_BASE}/watch/providers/movie?api_key=${apiKey}&watch_region=${upperRegion}`);
+      const data = await res.json();
+      let providers = data.results || [];
+      
+      // If movies return nothing, try TV (rare but possible for some regions)
+      if (providers.length === 0) {
+        const tvRes = await fetch(`${TMDB_BASE}/watch/providers/tv?api_key=${apiKey}&watch_region=${upperRegion}`);
+        const tvData = await tvRes.json();
+        providers = tvData.results || [];
+      }
+
+      if (providers.length > 0) {
+        providerCache[upperRegion] = providers;
+      }
+      return providers;
+    } catch (e) {
+      console.error(`[TMDB] Failed to fetch providers for ${upperRegion}. URL tried: ${TMDB_BASE}/watch/providers/movie?api_key=${apiKey}&watch_region=${upperRegion}. Error detail:`, e);
+      return [];
+    } finally {
+      delete pendingRequests[upperRegion];
+    }
+  })();
+
+  pendingRequests[upperRegion] = fetchPromise;
+  return fetchPromise;
 }
 
 /**
@@ -134,13 +146,13 @@ export async function fetchTrendingContent(region = 'IN', forceRefresh = false) 
     // Dynamically resolve provider IDs for the current region
     const providerNames = OTT_PROVIDERS.map(p => p.name);
     const resolvedIds = await resolveProviderIds(region, providerNames);
-    const encodedProviders = encodeURIComponent(resolvedIds).replace(/%7C/g, '|');
+    const encodedProviders = encodeURIComponent(resolvedIds);
 
     const futureDate = new Date();
     futureDate.setMonth(futureDate.getMonth() + 6);
     const dateStr = futureDate.toISOString().split('T')[0];
 
-    const langFilter = langQuery ? `&with_original_language=${langQuery}` : '';
+    const langFilter = langQuery ? `&with_original_language=${encodeURIComponent(langQuery)}` : '';
 
     const [
       globalRes, 
@@ -407,18 +419,19 @@ export async function fetchProviderContent(region = 'IN', providerId = 8) {
       KR: 'ko',
       JP: 'ja'
     };
-    const localLang = langMap[region] ? `&with_original_language=${langMap[region]}` : (preferredLangs.length > 0 ? `&with_original_language=${preferredLangs.join('|')}` : '');
+    const rawLocalLang = langMap[region] || (preferredLangs.length > 0 ? preferredLangs.join('|') : '');
+    const localLang = rawLocalLang ? `&with_original_language=${encodeURIComponent(rawLocalLang)}` : '';
 
     try {
       // Resolve provider ID for the current region dynamically
       const providerObj = OTT_PROVIDERS.find(p => p.id === providerId);
       const resolvedProviderId = await resolveProviderIds(region, [providerObj?.name || '']);
       
-      const encodedProvider = encodeURIComponent(resolvedProviderId || providerId).replace(/%7C/g, '|');
+      const encodedProvider = encodeURIComponent(resolvedProviderId || providerId);
       
       // monetization=flatrate|free is critical for many regions to return any results via discover
-      const movieUrl = `${TMDB_BASE}/discover/movie?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc${localLang}`;
-      const tvUrl = `${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate|free&sort_by=popularity.desc${localLang}`;
+      const movieUrl = `${TMDB_BASE}/discover/movie?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate%7Cfree&sort_by=popularity.desc${localLang}`;
+      const tvUrl = `${TMDB_BASE}/discover/tv?api_key=${apiKey}&watch_region=${region}&with_watch_providers=${encodedProvider}&with_watch_monetization_types=flatrate%7Cfree&sort_by=popularity.desc${localLang}`;
 
       const [movieRes, tvRes] = await Promise.all([
         fetch(movieUrl).catch(() => null),

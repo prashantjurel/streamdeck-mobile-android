@@ -84,6 +84,7 @@ const ApiKeySetupModal = ({ onKeySaved, onSkip }) => {
         return;
       }
     } catch (e) {
+      console.error('[ApiKeySetupModal] Verification failed with error:', e);
       setErrorMsg('Network error. Unable to verify key.');
       setIsValidating(false);
       return;

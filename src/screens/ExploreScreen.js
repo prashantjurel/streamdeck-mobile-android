@@ -364,13 +364,20 @@ const ExploreScreen = ({ navigation, route }) => {
         style={styles.searchResultCard}
         onPress={() => handleMoviePress(item)}
         activeOpacity={0.7}>
-        {posterUrl ? (
-          <Image source={{ uri: posterUrl }} style={styles.resultPoster} />
-        ) : (
-          <View style={[styles.resultPoster, styles.resultPosterPlaceholder]}>
-            <Text style={{ fontSize: 24 }}>🎬</Text>
-          </View>
-        )}
+        <View style={styles.resultPosterWrap}>
+          <Image
+            source={require('../assets/images/poster_placeholder.jpg')}
+            style={styles.resultPoster}
+            resizeMode="cover"
+          />
+          {posterUrl && (
+            <Image
+              source={{ uri: posterUrl }}
+              style={[styles.resultPoster, StyleSheet.absoluteFillObject]}
+              resizeMode="cover"
+            />
+          )}
+        </View>
         <View style={styles.resultInfo}>
           <Text style={styles.resultTitle} numberOfLines={2}>
             {title}
@@ -605,6 +612,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     elevation: 4,
   },
+  resultPosterWrap: { width: 90, height: 135, overflow: 'hidden' },
   resultPoster: { width: 90, height: 135 },
   resultPosterPlaceholder: { backgroundColor: Colors.bgSecondary, justifyContent: 'center', alignItems: 'center' },
   resultInfo: { flex: 1, padding: Spacing.md, justifyContent: 'center' },

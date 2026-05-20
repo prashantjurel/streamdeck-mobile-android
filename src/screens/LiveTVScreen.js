@@ -471,15 +471,20 @@ const LiveTVScreen = ({navigation, route}) => {
       
       const loadMatches = async () => {
         setLoadingMatches(true);
-        const matches = await fetchLiveSportsData();
+
+        // Fetch general sports AND World Cup data in parallel — they're independent
+        const [matches, apiWorldCupMatches] = await Promise.all([
+          fetchLiveSportsData().catch(err => {
+            console.error('[LiveTV] fetchLiveSportsData failed:', err);
+            return [];
+          }),
+          fetchWorldCupData().catch(err => {
+            console.error('[LiveTV] fetchWorldCupData failed:', err);
+            return [];
+          }),
+        ]);
+
         setLiveMatches(matches);
-        
-        let apiWorldCupMatches = [];
-        try {
-          apiWorldCupMatches = await fetchWorldCupData();
-        } catch (err) {
-          console.error("Failed to load live World Cup data:", err);
-        }
         
         // Merge API data with the full mock list to show all matches
         const merged = mergeMatches(apiWorldCupMatches, INITIAL_WORLD_CUP_CHRONOLOGICAL_GROUP_STAGE);

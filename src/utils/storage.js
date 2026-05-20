@@ -7,7 +7,7 @@ const KEYS = {
   WATCHLIST: 'my_watchlist',
   TMDB_API_KEY: 'tmdb_api_key',
   DIRECT_ENGINE_ENABLED: 'direct_engine_enabled',
-  TMDB_HOME_CACHE: 'tmdb_home_cache_v6',
+  TMDB_HOME_CACHE: 'tmdb_home_cache_v7',
   SETTINGS: 'streamdeck_settings',
   DEFAULT_PROVIDER: 'default_streaming_provider',
 };
@@ -168,21 +168,28 @@ export async function toggleWatchlistItem(movie) {
 }
 
 // ============================================
-// TMDB Cache (Daily, per region)
+// TMDB Cache (6-hour TTL, per region + lang)
 // ============================================
+const TMDB_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours
+
 export async function getTMDBHomeCache(region, langHash = '') {
   try {
     const dataStr = await AsyncStorage.getItem(KEYS.TMDB_HOME_CACHE);
     if (!dataStr) return null;
     
     const cache = JSON.parse(dataStr);
-    const today = new Date().toLocaleDateString();
+    const age = Date.now() - (cache.timestamp || 0);
     
-    // Only return if date, region, AND language hash match
-    if (cache.date === today && cache.region === region && cache.langHash === langHash) {
-      if (cache.global?.length > 0 && cache.local?.length > 0) {
-        return cache;
-      }
+    // Return cache only if region, language, AND age are valid
+    if (
+      cache.region === region &&
+      cache.langHash === langHash &&
+      age < TMDB_CACHE_TTL_MS &&
+      cache.global?.length > 0 &&
+      cache.local?.length > 0
+    ) {
+      console.log(`[Cache] Serving TMDB home cache (${Math.round(age / 60000)}m old, TTL 360m)`);
+      return cache;
     }
   } catch (e) {
     // Cache miss
@@ -192,15 +199,15 @@ export async function getTMDBHomeCache(region, langHash = '') {
 
 export async function setTMDBHomeCache(region, global, local, langHash = '') {
   try {
-    const today = new Date().toLocaleDateString();
     const cache = {
-      date: today,
+      timestamp: Date.now(), // Used for 6-hour TTL check
       region,
       langHash,
       global,
       local,
     };
     await AsyncStorage.setItem(KEYS.TMDB_HOME_CACHE, JSON.stringify(cache));
+    console.log(`[Cache] TMDB home cache saved for region=${region}, items=${global.length}+${local.length}`);
   } catch (e) {
     console.warn('[Storage] Failed to save TMDB cache:', e);
   }
@@ -296,6 +303,7 @@ export function getDefaultSettings() {
 export async function getApiKey() {
   try {
     const key = await AsyncStorage.getItem(KEYS.TMDB_API_KEY);
+    console.log('[Storage] Stored API Key in AsyncStorage:', JSON.stringify(key));
     return key || null;
   } catch (e) {
     return null;
