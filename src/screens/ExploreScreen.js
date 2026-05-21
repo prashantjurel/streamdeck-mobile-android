@@ -40,8 +40,8 @@ import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
 import Animated, { FadeInDown, FadeOutDown } from 'react-native-reanimated';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import SeriesPickerModal from '../components/SeriesPickerModal';
-import MediaProviderModal from '../components/MediaProviderModal';
+
+import { useMediaDetails } from '../context/MediaDetailsContext';
 
 
 
@@ -55,13 +55,6 @@ const ExploreScreen = ({ navigation, route }) => {
   const [loading, setLoading] = useState(true);
   const [topRatedFilter, setTopRatedFilter] = useState('movie');
 
-  // Selection Modal State
-  const [selectedMovie, setSelectedMovie] = useState(null);
-  const [availableProviders, setAvailableProviders] = useState([]);
-  const [showPicker, setShowPicker] = useState(false);
-  const [checkingAvailability, setCheckingAvailability] = useState(false);
-  const [showSeriesPicker, setShowSeriesPicker] = useState(false);
-  const [selectedQuickItem, setSelectedQuickItem] = useState(null);
   const [continueWatching, setContinueWatching] = useState([]);
 
   // Tab bar visibility is managed globally or via padding to prevent layout jumps
@@ -72,6 +65,7 @@ const ExploreScreen = ({ navigation, route }) => {
   const topPadding = insets.top || StatusBar.currentHeight || 0;
 
   const { hasKey, requestKey, invalidateKey } = useApi();
+  const { openMediaDetails } = useMediaDetails();
 
   useFocusEffect(
     useCallback(() => {
@@ -153,203 +147,9 @@ const ExploreScreen = ({ navigation, route }) => {
     return () => clearTimeout(timer);
   }, [searchQuery, handleSearch]);
 
-  const checkProviderAvailability = async (tmdbId, mediaType) => {
-    setCheckingAvailability(true);
-    
-    // 1. Prepare Initial Providers (Direct Engine + MovieBox + YouTube)
-    const initialProviders = [];
-    if (directEngineEnabled) {
-      initialProviders.push({
-        id: 'direct',
-        name: 'StreamDeck Engine',
-        icon: 'movie-open-play',
-        color: Colors.accentPurple,
-        logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
-        searchUrl: null,
-      });
-    }
-
-    // Add MovieBox Sources
-    (movieboxSources || []).filter(s => s.enabled).forEach((s, idx) => {
-      const mbDomain = s.url.trim();
-      const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
-      initialProviders.push({
-        id: `moviebox_${idx}`,
-        name: s.name || mbSearchDomain,
-        icon: 'movie-open-play',
-        color: '#8b5cf6',
-        logoUrl: null,
-        searchUrl: `https://${mbSearchDomain}/search?q=`,
-        customDomain: mbDomain,
-      });
-    });
-
-    initialProviders.push({
-      id: 'youtube',
-      name: 'YouTube',
-      icon: 'youtube',
-      color: '#FF0000',
-      logoUrl: null,
-      searchUrl: 'https://www.youtube.com/results?search_query=',
-    });
-
-    setAvailableProviders(initialProviders);
-    
-    // 2. Open Modal with a slight delay for stability
-    setTimeout(() => {
-      setShowPicker(true);
-    }, 50);
-
-    try {
-      const watchInfo = await fetchWatchProviders(tmdbId, mediaType);
-
-      const found = [];
-      if (watchInfo) {
-        const allProviders = [
-          ...(watchInfo.flatrate || []),
-          ...(watchInfo.buy || []),
-          ...(watchInfo.rent || [])
-        ];
-        const uniqueIds = [...new Set(allProviders.map(p => p.provider_id))];
-        uniqueIds.forEach(id => {
-          if (OTT_PROVIDER_MAP[id]) {
-            const tmdbProvider = allProviders.find(p => p.provider_id === id);
-            found.push({
-              ...OTT_PROVIDER_MAP[id],
-              logoUrl: tmdbProvider?.logo_path 
-                ? `https://image.tmdb.org/t/p/w200${tmdbProvider.logo_path}` 
-                : OTT_PROVIDER_MAP[id].logoUrl || null,
-            });
-          }
-        });
-      }
-
-      // Always Add Enabled MovieBox Sources as Primary Hubs
-      (movieboxSources || [])
-        .filter(s => s.enabled)
-        .forEach((s, idx) => {
-          const mbDomain = s.url.trim();
-          const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
-          
-          // Personality Engine
-          const searchSource = (s.name || mbSearchDomain).toLowerCase();
-          let icon = 'movie-open-play';
-          if (searchSource.includes('tv') || searchSource.includes('live')) icon = 'television-play';
-          else if (searchSource.includes('flix') || searchSource.includes('cine')) icon = 'video-box';
-          else if (searchSource.includes('box')) icon = 'play-box-multiple';
-          else {
-            const icons = ['movie-open-play', 'video-box', 'play-box-multiple', 'movie-filter'];
-            icon = icons[(s.name || mbSearchDomain).length % icons.length];
-          }
-
-          const colors = ['#E21D48', '#8b5cf6', '#ec4899', '#3b82f6', '#10b981', '#f59e0b', '#14b8a6', '#6366f1'];
-          let hash = 0;
-          const name = s.name || mbSearchDomain;
-          for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
-          const color = colors[Math.abs(hash) % colors.length];
-
-          found.push({
-            id: `moviebox_${idx}`,
-            name: s.name || mbSearchDomain, // Show specific domain name
-            color: color,
-            icon: icon,
-            logoUrl: null,
-            searchUrl: `https://${mbSearchDomain}/search?q=`,
-            customDomain: mbDomain
-          });
-        });
-
-      // Always Add YouTube as Primary Hub
-      const ytMap = OTT_PROVIDER_MAP['youtube'] || {};
-      found.push({
-        id: 'youtube',
-        name: 'YouTube',
-        color: '#FF0000',
-        icon: 'youtube',
-        logoUrl: ytMap.logoUrl || null,
-        searchUrl: 'https://www.youtube.com/results?search_query='
-      });
-
-      // Add StreamDeck Direct Engine as the first option
-      if (directEngineEnabled) {
-        found.unshift({
-          id: 'direct',
-          name: 'StreamDeck Engine',
-          icon: 'movie-open-play',
-          color: Colors.accentPurple,
-          logoUrl: Image.resolveAssetSource(require('../assets/images/logo.png')).uri,
-          searchUrl: null,
-        });
-      }
-
-      setAvailableProviders(found);
-    } catch (e) {
-      console.error('[Explore] Availability check failed:', e);
-    } finally {
-      setCheckingAvailability(false);
-    }
-  };
-
   const handleMoviePress = async (movie) => {
     if (!movie) return;
-    const title = movie.title || movie.name || 'Movie';
-    const mediaType = movie.media_type || (movie.first_air_date ? 'tv' : 'movie');
-    const tmdbId = movie.id;
-
-    console.log(`[Explore] handleMoviePress triggered: ${title} (${mediaType}:${tmdbId})`);
-    
-    setSelectedMovie(movie);
-    setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movie.poster_path });
-
-    if (mediaType === 'tv') {
-      setShowSeriesPicker(true);
-      return;
-    }
-
-    await checkProviderAvailability(tmdbId, mediaType);
-  };
-
-  const handleSelectProvider = async provider => {
-    const title = selectedMovie.title || selectedMovie.name;
-    const mediaType = selectedMovie.media_type || (selectedMovie.title ? 'movie' : 'tv');
-    const tmdbId = selectedMovie.id;
-
-    setShowPicker(false);
-
-    const result = await navigateToOTT(
-      provider,
-      selectedMovie.episodeTitle || title,
-      tmdbId,
-      mediaType,
-      provider.customDomain,
-      navigation,
-      selectedMovie.season || 1,
-      selectedMovie.episode || 1,
-      0,
-      selectedMovie.thumb || selectedMovie.poster_path,
-      title
-    );
-
-    // Handle unavailable from Direct Engine
-    if (result && result.status === 'unavailable') {
-      setShowPicker(true); // Re-open modal for user to pick another source
-    }
-  };
-
-  const handleSelectEpisode = async (episode, season) => {
-    setShowSeriesPicker(false);
-    
-    const updatedItem = {
-      ...selectedQuickItem,
-      episode: episode.episode_number,
-      season: season.season_number,
-      episodeTitle: episode.name,
-      thumb: episode.still_path || selectedQuickItem.thumb
-    };
-    setSelectedQuickItem(updatedItem);
-    setSelectedMovie({ ...selectedMovie, ...updatedItem });
-    
-    await checkProviderAvailability(selectedQuickItem.tmdbId, 'tv');
+    openMediaDetails(movie);
   };
 
   const renderSearchResult = ({ item }) => {
@@ -536,23 +336,7 @@ const ExploreScreen = ({ navigation, route }) => {
         </ScrollView>
       )}
 
-      {/* Shared Series & Episode Picker */}
-      <SeriesPickerModal
-        visible={showSeriesPicker}
-        item={selectedQuickItem}
-        continueWatching={continueWatching}
-        onClose={() => setShowSeriesPicker(false)}
-        onSelectEpisode={handleSelectEpisode}
-      />
 
-      {/* Shared Provider Picker Overlay */}
-      <MediaProviderModal
-        visible={showPicker}
-        providers={availableProviders}
-        isFetching={checkingAvailability}
-        onClose={() => setShowPicker(false)}
-        onSelectProvider={handleSelectProvider}
-      />
     </View>
   );
 };

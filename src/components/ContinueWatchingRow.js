@@ -16,84 +16,105 @@ import Ionicons from 'react-native-vector-icons/Ionicons';
 import ContinueWatchingInfoModal from './ContinueWatchingInfoModal';
 
 const {width: SCREEN_WIDTH} = Dimensions.get('window');
-const CARD_WIDTH = SCREEN_WIDTH * 0.55; 
-const CARD_HEIGHT = (CARD_WIDTH * 9) / 16;
+const CARD_WIDTH = SCREEN_WIDTH * 0.35; 
+const CARD_HEIGHT = CARD_WIDTH * 1.5;
 
 const ContinueWatchingCard = ({item, onPress}) => {
   const progress = item.progress || 0;
-  const title = item.title || 'Continue Watching';
-  const showBadge = item.appId && item.appId !== 'direct';
+  const title = item.mediaType === 'tv' && item.showName ? item.showName : (item.title || 'Continue Watching');
+  const subtitle = item.mediaType === 'tv' && item.showName ? `S${item.season || 1} E${item.episode || 1}` : 'Movie';
+  
+  // Format lastWatched timestamp
+  let timeInfo = '';
+  const lastTime = item.timestamp || item.lastWatched;
+  if (lastTime) {
+    const diffMs = Date.now() - lastTime;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMins / 60);
+    const diffDays = Math.floor(diffHours / 24);
+    
+    if (diffMins < 60) {
+      timeInfo = diffMins <= 1 ? 'Just now' : `${diffMins}m ago`;
+    } else if (diffHours < 24) {
+      timeInfo = `${diffHours}h ago`;
+    } else if (diffDays === 1) {
+      timeInfo = 'Yesterday';
+    } else {
+      timeInfo = `${diffDays}d ago`;
+    }
+  }
 
+  // Format time remaining
+  let durationInfo = '';
+  if (item.currentTime && item.duration && item.duration > 0) {
+    const remainingSeconds = Math.max(0, item.duration - item.currentTime);
+    if (remainingSeconds < 60) {
+      durationInfo = 'Almost done';
+    } else {
+      const h = Math.floor(remainingSeconds / 3600);
+      const m = Math.floor((remainingSeconds % 3600) / 60);
+      if (h > 0) {
+        durationInfo = `${h}h ${m}m left`;
+      } else {
+        durationInfo = `${m} min left`;
+      }
+    }
+  }
   return (
     <View style={styles.cardContainer}>
       <TouchableOpacity
-        style={styles.card}
+        style={styles.cardWrapper}
         onPress={() => onPress && onPress(item)}
         activeOpacity={0.9}>
-        <ImageBackground
-          source={(item.thumb && item.thumb.length > 0) ? {uri: item.thumb} : null}
-          style={styles.backgroundImage}
-          imageStyle={{borderRadius: BorderRadius.md}}
-          resizeMode="cover"
-        >
-          {(!item.thumb || item.thumb.length === 0) && (
-            <LinearGradient
-              colors={['#1e1e2e', '#0f0f1a']}
-              style={styles.placeholderContainer}
-            >
-              <View style={styles.placeholderIconBox}>
-                <Ionicons name="play" size={24} color="rgba(255,255,255,0.2)" />
-              </View>
-            </LinearGradient>
-          )}
-
-          {/* Top Actions */}
-          <View style={styles.topActions}>
-            {showBadge ? (
-              <View style={[styles.appBadge, {backgroundColor: Colors.appColors[item.appId] || Colors.accentPurple}]}>
-                <Text style={styles.appBadgeText}>{(item.appId || 'S').toUpperCase().charAt(0)}</Text>
-              </View>
-            ) : <View />}
-          </View>
-
-          <LinearGradient
-            colors={['transparent', 'rgba(0,0,0,0.8)', '#000']}
-            style={styles.bottomScrim}
+        
+        {/* Poster Image */}
+        <View style={styles.posterContainer}>
+          <ImageBackground
+            source={(item.poster || item.thumb) ? {uri: item.poster || item.thumb} : null}
+            style={styles.backgroundImage}
+            imageStyle={{borderRadius: BorderRadius.md}}
+            resizeMode="cover"
           >
-            {item.mediaType === 'tv' && item.showName ? (
-              <View style={{ marginBottom: 6 }}>
-                <Text style={styles.showNameText} numberOfLines={1}>{item.showName}</Text>
-                <Text style={styles.episodeInfoText} numberOfLines={1}>
-                  <Text style={{color: Colors.accentPink, fontWeight: '900'}}>S{item.season || 1} E{item.episode || 1}</Text>
-                  {item.title ? ` • ${item.title}` : ''}
-                </Text>
-              </View>
-            ) : (
-              <Text style={styles.titleText} numberOfLines={1}>{title}</Text>
+            {(!item.poster && !item.thumb) && (
+              <LinearGradient
+                colors={['#1e1e2e', '#0f0f1a']}
+                style={styles.placeholderContainer}
+              >
+                <View style={styles.placeholderIconBox}>
+                  <Ionicons name="play" size={24} color="rgba(255,255,255,0.2)" />
+                </View>
+              </LinearGradient>
             )}
-            
-            <View style={styles.progressContainer}>
-              <View style={styles.progressBarBg}>
-                <LinearGradient
-                  colors={[Colors.accentPurple, Colors.accentPink]}
-                  start={{x: 0, y: 0}}
-                  end={{x: 1, y: 0}}
-                  style={[styles.progressBarFill, {width: `${Math.max(2, Math.min(progress, 100))}%`}]}
-                />
-              </View>
-              <Text style={styles.progressPercent}>{Math.round(progress)}%</Text>
-            </View>
-          </LinearGradient>
-        </ImageBackground>
-      </TouchableOpacity>
 
-      {/* BIG Floating Remove Button (Top Right) */}
-      <TouchableOpacity 
-        style={styles.removeBtn}
-        onPress={() => item.onRemove && item.onRemove(item.id)}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="close" size={20} color="#fff" />
+            {/* Progress Bar at bottom of poster */}
+            <View style={styles.posterProgressBarBg}>
+              <LinearGradient
+                colors={[Colors.accentPurple, Colors.accentPink]}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 0 }}
+                style={[styles.posterProgressBarFill, { width: `${Math.max(2, Math.min(progress, 100))}%` }]}
+              />
+            </View>
+
+          </ImageBackground>
+        </View>
+
+        {/* Text Content Below Poster */}
+        <View style={styles.textContainer}>
+          <View style={styles.rowBetween}>
+            <Text style={styles.titleText} numberOfLines={2}>{title}</Text>
+            <Text style={styles.progressText}>{Math.round(progress)}%</Text>
+          </View>
+          {item.mediaType === 'tv' && item.season && (
+            <Text style={[styles.subText, { color: Colors.accentPurple, fontWeight: '700', marginBottom: 2 }]} numberOfLines={1}>
+              S{item.season} E{item.episode || 1}
+            </Text>
+          )}
+          <View style={styles.rowBetween}>
+            <Text style={styles.subText} numberOfLines={1}>{timeInfo}</Text>
+            {durationInfo ? <Text style={[styles.subText, { color: 'rgba(255,255,255,0.5)' }]}>{durationInfo}</Text> : null}
+          </View>
+        </View>
       </TouchableOpacity>
     </View>
   );
@@ -150,115 +171,80 @@ const styles = StyleSheet.create({
     paddingBottom: Spacing.xs,
   },
   cardContainer: {
-    marginRight: Spacing.md,
-    marginTop: 12, // Space for floating button
+    marginRight: Spacing.lg,
     position: 'relative',
-    overflow: 'visible',
   },
-  card: {
+  cardWrapper: {
+    width: CARD_WIDTH,
+  },
+  posterContainer: {
     width: CARD_WIDTH,
     height: CARD_HEIGHT,
     borderRadius: BorderRadius.md,
     overflow: 'hidden',
     backgroundColor: '#111118',
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.05)',
     elevation: 8,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.4,
     shadowRadius: 6,
+    marginBottom: 8,
+    borderWidth: 0.5,
+    borderColor: 'rgba(255,255,255,0.1)',
   },
   backgroundImage: {
     flex: 1,
   },
-  topActions: {
+  overlayBtn: {
     position: 'absolute',
-    top: 8,
-    left: 8,
+    bottom: 8,
     right: 8,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    zIndex: 10,
-  },
-  appBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 4,
-    backgroundColor: Colors.accentPurple,
-  },
-  appBadgeText: {
-    color: '#fff',
-    fontSize: 9,
-    fontWeight: '900',
-  },
-  removeBtn: {
-    position: 'absolute',
-    top: -12,
-    right: -12,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    backgroundColor: 'rgba(20, 20, 20, 0.98)',
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(20, 20, 20, 0.8)',
     justifyContent: 'center',
     alignItems: 'center',
-    borderWidth: 1.5,
-    borderColor: 'rgba(255, 255, 255, 0.4)',
-    zIndex: 100,
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: {width: 0, height: 2},
-    shadowOpacity: 0.5,
-    shadowRadius: 4,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.2)',
   },
-  bottomScrim: {
+  textContainer: {
+    paddingHorizontal: 2,
+  },
+  rowBetween: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 4,
+  },
+  titleText: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '800',
+    flex: 1,
+    marginRight: 6,
+  },
+  progressText: {
+    color: Colors.accentPink,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+  subText: {
+    color: 'rgba(255,255,255,0.5)',
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  posterProgressBarBg: {
     position: 'absolute',
     bottom: 0,
     left: 0,
     right: 0,
-    padding: 10,
-    paddingTop: 20,
-  },
-  titleText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '700',
-    marginBottom: 6,
-  },
-  showNameText: {
-    color: '#fff',
-    fontSize: 13,
-    fontWeight: '800',
-    marginBottom: 1,
-  },
-  episodeInfoText: {
-    color: 'rgba(255,255,255,0.6)',
-    fontSize: 10,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  progressContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  progressBarBg: {
-    flex: 1,
     height: 3,
     backgroundColor: 'rgba(255,255,255,0.15)',
-    borderRadius: 2,
-    marginRight: 8,
-    overflow: 'hidden',
   },
-  progressBarFill: {
+  posterProgressBarFill: {
     height: '100%',
     borderRadius: 2,
-  },
-  progressPercent: {
-    color: '#94a3b8',
-    fontSize: 9,
-    fontWeight: '800',
-    width: 26,
   },
   infoBtn: {
     padding: 4,

@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>StreamDeck Player</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    
+    #player-container {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+    
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+    
+    /* Quality selector overlay */
+    #quality-menu {
+      display: none;
+      position: fixed;
+      bottom: 60px;
+      right: 16px;
+      background: rgba(15, 15, 25, 0.95);
+      border: 1px solid rgba(139, 92, 246, 0.3);
+      border-radius: 12px;
+      padding: 8px 0;
+      min-width: 160px;
+      z-index: 10000;
+      backdrop-filter: blur(12px);
+    }
+    
+    #quality-menu.show { display: block; }
+    
+    .quality-option {
+      padding: 10px 16px;
+      color: #e2e8f0;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    
+    .quality-option:hover,
+    .quality-option.active {
+      background: rgba(139, 92, 246, 0.2);
+      color: #8b5cf6;
+    }
+    
+    .quality-option.active::before {
+      content: '✓ ';
+      color: #8b5cf6;
+    }
+    
+    /* Error screen */
+    #error-screen {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: #07070B;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      z-index: 20000;
+    }
+    
+    #error-screen.show { display: flex; }
+    
+    .error-icon { font-size: 64px; margin-bottom: 16px; }
+    .error-title { font-size: 20px; font-weight: 700; margin-bottom: 8px; }
+    .error-message { font-size: 14px; color: #94a3b8; text-align: center; max-width: 300px; }
+    
+    /* Loading spinner */
+    #loading {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 5000;
+    }
+    
+    .spinner {
+      width: 48px; height: 48px;
+      border: 3px solid rgba(139, 92, 246, 0.2);
+      border-top-color: #8b5cf6;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div id="player-container">
+    <video id="video" playsinline autoplay></video>
+  </div>
+  
+  <div id="loading"><div class="spinner"></div></div>
+  
+  <div id="quality-menu"></div>
+  
+  <div id="error-screen">
+    <div class="error-icon">⚠️</div>
+    <div class="error-title">Playback Error</div>
+    <div class="error-message" id="error-message">Unable to load the video stream.</div>
+  </div>
+
+  <!-- HLS.js from CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js"></script>
+  
+  <script>
+    (function() {
+      'use strict';
+      
+      const video = document.getElementById('video');
+      const loading = document.getElementById('loading');
+      const qualityMenu = document.getElementById('quality-menu');
+      const errorScreen = document.getElementById('error-screen');
+      const errorMessage = document.getElementById('error-message');
+      
+      // Parse query parameters
+      const params = new URLSearchParams(window.location.search);
+      const streamUrl = params.get('url');
+      const resumeTime = parseFloat(params.get('t') || '0');
+      const subtitleUrl = params.get('sub');
+      
+      // Communication with React Native
+      function sendMessage(data) {
+        try {
+          if (window.ReactNativeWebView) {
+            window.ReactNativeWebView.postMessage(JSON.stringify(data));
+          }
+        } catch (e) {}
+      }
+      
+      function showError(msg) {
+        errorMessage.textContent = msg;
+        errorScreen.classList.add('show');
+        loading.style.display = 'none';
+        sendMessage({ type: 'error', message: msg });
+      }
+      
+      if (!streamUrl) {
+        showError('No stream URL provided.');
+        return;
+      }
+      
+      // ── HLS.js Initialization ─────────────────────────────
+      let hls = null;
+      let currentLevel = -1; // Auto
+      
+      if (streamUrl.includes('.m3u8') && Hls.isSupported()) {
+        hls = new Hls({
+          maxBufferLength: 30,
+          maxMaxBufferLength: 60,
+          startLevel: -1, // Auto quality
+          capLevelOnFPSDrop: true,
+          capLevelToPlayerSize: true,
+          enableWorker: true,
+        });
+        
+        hls.loadSource(streamUrl);
+        hls.attachMedia(video);
+        
+        hls.on(Hls.Events.MANIFEST_PARSED, function(event, data) {
+          console.log('[HLS] Manifest parsed, levels:', data.levels.length);
+          loading.style.display = 'none';
+          
+          // Build quality menu
+          buildQualityMenu(data.levels);
+          
+          // Resume from timestamp
+          if (resumeTime > 0) {
+            video.currentTime = resumeTime;
+          }
+          
+          video.play().catch(function() {});
+          sendMessage({ type: 'ready', levels: data.levels.length });
+        });
+        
+        hls.on(Hls.Events.ERROR, function(event, data) {
+          if (data.fatal) {
+            switch (data.type) {
+              case Hls.ErrorTypes.NETWORK_ERROR:
+                console.error('[HLS] Fatal network error');
+                hls.startLoad(); // Try to recover
+                break;
+              case Hls.ErrorTypes.MEDIA_ERROR:
+                console.error('[HLS] Fatal media error');
+                hls.recoverMediaError();
+                break;
+              default:
+                showError('Stream playback failed: ' + (data.reason || 'Unknown error'));
+                hls.destroy();
+                break;
+            }
+          }
+        });
+        
+        hls.on(Hls.Events.LEVEL_SWITCHED, function(event, data) {
+          currentLevel = data.level;
+          updateQualityMenuActive();
+        });
+        
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        // Native HLS support (Safari / iOS)
+        video.src = streamUrl;
+        video.addEventListener('loadedmetadata', function() {
+          loading.style.display = 'none';
+          if (resumeTime > 0) video.currentTime = resumeTime;
+          video.play().catch(function() {});
+          sendMessage({ type: 'ready' });
+        });
+      } else if (streamUrl.includes('.mp4') || streamUrl.includes('.mkv')) {
+        // Direct file playback
+        video.src = streamUrl;
+        video.addEventListener('loadedmetadata', function() {
+          loading.style.display = 'none';
+          if (resumeTime > 0) video.currentTime = resumeTime;
+          video.play().catch(function() {});
+          sendMessage({ type: 'ready' });
+        });
+      } else {
+        showError('Unsupported stream format.');
+        return;
+      }
+      
+      // ── Subtitle Track ────────────────────────────────────
+      if (subtitleUrl) {
+        var track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.src = subtitleUrl;
+        track.srclang = 'en';
+        track.label = 'Subtitles';
+        track.default = true;
+        video.appendChild(track);
+        
+        video.addEventListener('loadedmetadata', function() {
+          if (video.textTracks && video.textTracks[0]) {
+            video.textTracks[0].mode = 'showing';
+          }
+        });
+      }
+      
+      // ── Video Event Forwarding ────────────────────────────
+      video.addEventListener('timeupdate', function() {
+        sendMessage({
+          type: 'cinesrc:timeupdate',
+          event: 'timeupdate',
+          currentTime: video.currentTime,
+          duration: video.duration
+        });
+      });
+      
+      video.addEventListener('ended', function() {
+        sendMessage({ type: 'cinesrc:ended', event: 'ended' });
+      });
+      
+      video.addEventListener('play', function() {
+        sendMessage({ event: 'sdm:playback_started' });
+      });
+      
+      video.addEventListener('error', function(e) {
+        showError('Video playback error: ' + (video.error?.message || 'Unknown'));
+      });
+      
+      video.addEventListener('loadedmetadata', function() {
+        sendMessage({
+          type: 'cinesrc:loadedmetadata',
+          duration: video.duration
+        });
+      });
+      
+      // ── Quality Menu ──────────────────────────────────────
+      function buildQualityMenu(levels) {
+        if (!levels || levels.length <= 1) return;
+        
+        qualityMenu.innerHTML = '';
+        
+        // Auto option
+        var autoOpt = document.createElement('div');
+        autoOpt.className = 'quality-option active';
+        autoOpt.textContent = 'Auto';
+        autoOpt.dataset.level = '-1';
+        autoOpt.onclick = function() { selectQuality(-1); };
+        qualityMenu.appendChild(autoOpt);
+        
+        // Individual quality levels
+        levels.forEach(function(level, idx) {
+          var opt = document.createElement('div');
+          opt.className = 'quality-option';
+          opt.textContent = level.height + 'p' + (level.bitrate ? ' (' + Math.round(level.bitrate / 1000) + 'kbps)' : '');
+          opt.dataset.level = idx;
+          opt.onclick = function() { selectQuality(idx); };
+          qualityMenu.appendChild(opt);
+        });
+      }
+      
+      function selectQuality(level) {
+        if (hls) {
+          hls.currentLevel = level;
+          currentLevel = level;
+          updateQualityMenuActive();
+          qualityMenu.classList.remove('show');
+        }
+      }
+      
+      function updateQualityMenuActive() {
+        var options = qualityMenu.querySelectorAll('.quality-option');
+        options.forEach(function(opt) {
+          var lvl = parseInt(opt.dataset.level);
+          opt.classList.toggle('active', lvl === currentLevel);
+        });
+      }
+      
+      // ── Handle commands from React Native ─────────────────
+      window.addEventListener('message', function(event) {
+        try {
+          var data = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          
+          if (data.command === 'seek' && data.args) {
+            video.currentTime = data.args[0] || 0;
+          } else if (data.command === 'play') {
+            video.play().catch(function() {});
+          } else if (data.command === 'pause') {
+            video.pause();
+          } else if (data.command === 'toggleQuality') {
+            qualityMenu.classList.toggle('show');
+          } else if (data.command === 'addSubtitleTrack' && data.args) {
+            // Dynamically add subtitle track
+            var newTrack = document.createElement('track');
+            newTrack.kind = 'subtitles';
+            newTrack.src = 'data:text/vtt;base64,' + btoa(data.args[0]);
+            newTrack.srclang = data.args[1] || 'en';
+            newTrack.label = data.args[2] || 'Subtitles';
+            newTrack.default = true;
+            video.appendChild(newTrack);
+            
+            // Enable the new track
+            for (var i = 0; i < video.textTracks.length; i++) {
+              video.textTracks[i].mode = (i === video.textTracks.length - 1) ? 'showing' : 'hidden';
+            }
+          }
+        } catch (e) {}
+      });
+      
+      // Safety timeout
+      setTimeout(function() {
+        if (loading.style.display !== 'none') {
+          loading.style.display = 'none';
+          sendMessage({ type: 'cinesrc:pulse_spoofed' });
+        }
+      }, 15000);
+      
+    })();
+  </script>
+</body>
+</html>

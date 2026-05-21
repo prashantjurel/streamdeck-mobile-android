@@ -32,6 +32,7 @@ import Animated, {
   interpolate,
   Extrapolation,
   withSpring,
+  withDelay,
   FadeInDown,
   FadeOutDown,
 } from 'react-native-reanimated';
@@ -42,8 +43,8 @@ import TrendingRow from '../components/TrendingRow';
 import { fetchTrendingContent, fetchWatchProviders, getImageUrl, OTT_PROVIDERS, fetchProviderContent, fetchRegionalProviders, fetchTVDetails, fetchTVSeasonDetails } from '../services/tmdb';
 import UpdateModal from '../components/UpdateModal';
 import RegionInfoModal from '../components/RegionInfoModal';
-import SeriesPickerModal from '../components/SeriesPickerModal';
-import MediaProviderModal from '../components/MediaProviderModal';
+
+import { useMediaDetails } from '../context/MediaDetailsContext';
 import { loadSettings, loadContinueWatching, isDirectEngineEnabled, loadWatchlist, toggleWatchlistItem, loadDefaultProvider, saveDefaultProvider } from '../utils/storage';
 
 import { fetchLiveSportsData, fetchWorldCupData } from '../services/sports';
@@ -51,6 +52,7 @@ import { useApi } from '../context/ApiContext';
 import { getCurrentUser, onAuthStateChanged } from '../services/auth';
 import { syncWithCloud } from '../services/sync';
 import { OTT_PROVIDER_MAP, navigateToOTT } from '../utils/OTTNavigation';
+import { isFebBoxAvailable } from '../services/febbox';
 
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import Ionicons from 'react-native-vector-icons/Ionicons';
@@ -214,28 +216,6 @@ const HomeSkeleton = ({ visible }) => {
 
 const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
   const isSelected = selectedMediaType === cat.id;
-  const rotation = useSharedValue(0);
-  const glowOpacity = useSharedValue(0);
-
-  useEffect(() => {
-    glowOpacity.value = withTiming(isSelected ? 1 : 0, { duration: 300 });
-    
-    if (isSelected) {
-      rotation.value = withRepeat(
-        withTiming(360, { duration: 3000, easing: Easing.linear }),
-        -1,
-        false
-      );
-    } else {
-      // Don't reset rotation to 0 immediately to avoid jumpy transitions
-      // Just let it stop or keep it at current value while fading out
-    }
-  }, [isSelected]);
-
-  const animatedGlowStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${rotation.value}deg` }],
-    opacity: glowOpacity.value,
-  }));
 
   return (
     <TouchableOpacity
@@ -244,14 +224,6 @@ const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
       style={styles.categoryChipContainer}
     >
       <View style={[styles.categoryChip, isSelected && styles.categoryChipActive]}>
-        <Animated.View style={[styles.glowBorder, animatedGlowStyle]}>
-          <LinearGradient
-            colors={['#8b5cf6', 'transparent', '#ec4899', 'transparent', '#8b5cf6']}
-            style={{ flex: 1 }}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-          />
-        </Animated.View>
         <View style={[styles.categoryChipInner, isSelected && styles.categoryChipInnerActive]}>
           <Ionicons 
             name={cat.icon} 
@@ -262,6 +234,47 @@ const CategoryChip = ({ cat, selectedMediaType, setSelectedMediaType }) => {
           <Text style={[styles.categoryText, isSelected && styles.categoryTextActive]}>
             {cat.name}
           </Text>
+        </View>
+      </View>
+    </TouchableOpacity>
+  );
+};
+
+const WorldCupBanner = ({ navigation }) => {
+  return (
+    <TouchableOpacity
+      style={[styles.wcBannerContainer, { height: 56 }]}
+      activeOpacity={0.85}
+      onPress={() => navigation.navigate('LiveTV', { expandWorldCup: true })}
+    >
+      <View style={[styles.wcBannerInner, { height: '100%', borderWidth: 1.5, borderColor: '#FFD700' }]}>
+        <Image
+          source={require('../assets/images/wc_bg.png')}
+          style={[StyleSheet.absoluteFill, styles.wcBannerBackdrop]}
+          resizeMode="cover"
+          blurRadius={4}
+        />
+        <View style={[StyleSheet.absoluteFill, styles.wcBannerOverlay]} />
+        
+        <View style={styles.wcBannerContent}>
+          <View style={[styles.wcBannerLeft, { flexDirection: 'row', alignItems: 'center' }]}>
+            <View style={[styles.wcBannerBadge, { marginBottom: 0 }]}>
+              <Ionicons name="trophy" size={16} color="#FFD700" style={{ marginRight: 6 }} />
+              <Text style={styles.wcBannerBadgeText}>FIFA WORLD CUP 2026</Text>
+            </View>
+          </View>
+          
+          <View style={styles.wcBannerRight}>
+            <LinearGradient
+              colors={['#FFD700', '#FFA500']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={[styles.wcBannerBtn, { paddingVertical: 5, paddingHorizontal: 12 }]}
+            >
+              <Text style={[styles.wcBannerBtnText, { fontSize: 11 }]}>VIEW ALL</Text>
+              <Ionicons name="chevron-forward" size={12} color="#000" />
+            </LinearGradient>
+          </View>
         </View>
       </View>
     </TouchableOpacity>
@@ -285,17 +298,14 @@ const HomeScreen = ({ navigation }) => {
   const [loading, setLoading] = useState(true);
   const [loadingGlobal, setLoadingGlobal] = useState(true);
   const [loadingLocal, setLoadingLocal] = useState(true);
-  const [loadingSports, setLoadingSports] = useState(true);
+  const [isFebBox, setIsFebBox] = useState(false);
+  
   const [loadingCW, setLoadingCW] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [showPicker, setShowPicker] = useState(false);
-  const [isFetchingProviders, setIsFetchingProviders] = useState(false);
   const [showRedirectWarning, setShowRedirectWarning] = useState(false);
+  const [loadingSports, setLoadingSports] = useState(true);
   const [showRegionInfo, setShowRegionInfo] = useState(false);
   const [redirectInfo, setRedirectInfo] = useState(null);
-
-  // --- TV Series Selection State ---
-  const [showSeriesPicker, setShowSeriesPicker] = useState(false);
 
   // --- TAB BAR SYNC (Keeping bar visible for stability, modals handle their own padding) ---
   useEffect(() => {
@@ -313,9 +323,7 @@ const HomeScreen = ({ navigation }) => {
       }
     });
   }, [navigation]);
-  const [selectedQuickItem, setSelectedQuickItem] = useState(null);
-  const lastSyncTime = useRef(0);
-  const [availableProviders, setAvailableProviders] = useState([]);
+  const [selectedMovie, setSelectedMovie] = useState(null);
   const [customProviders, setCustomProviders] = useState([]);
   const [movieboxSources, setMovieboxSources] = useState([]);
   const [directEngineEnabled, setDirectEngineEnabledState] = useState(true);
@@ -655,247 +663,18 @@ const HomeScreen = ({ navigation }) => {
     }
   };
 
-  // ── ▶ Button: Show where to stream ───────────────────
-  const handlePlayPress = async (movie, forcedEpisode = null) => {
-    if (!movie) return;
+  // ── Open Media Details Modal ───────────────
+  const { openMediaDetails: contextOpenMediaDetails } = useMediaDetails();
 
-    if (movie.isWorldCup || movie.id === 'wc-2026-promo-banner' || movie.isWorldCupPromo) {
+  const openMediaDetails = (item) => {
+    if (item.isSports || item.isWorldCup || item.id === 'wc-2026-promo-banner' || item.isWorldCupPromo) {
       navigation.navigate('LiveTV', { expandWorldCup: true });
       return;
     }
-    
-    const title = movie.title || movie.name || 'Movie';
-    // Robust detection: if it has first_air_date or is explicitly 'tv', it's a series
-    const mediaType = movie.media_type === 'tv' || movie.first_air_date ? 'tv' : 'movie';
-    const tmdbId = movie.id;
-    const activeEpisode = forcedEpisode;
-
-    console.log(`[Home] handlePlayPress triggered: ${title} (${mediaType}:${tmdbId}) | Episode: ${activeEpisode?.episode_number || 'none'}`);
-
-    if (mediaType === 'tv' && !forcedEpisode) {
-      setSelectedQuickItem({ id: tmdbId, tmdbId, name: title, mediaType, thumb: movie.poster_path });
-      setShowSeriesPicker(true);
-      return;
-    }
-
-    if (forcedEpisode) {
-      setSelectedQuickItem(movie);
-    }
-
-    // 1. Prepare Provider Categories
-    const engineProviders = [];
-    const movieboxProviders = [];
-    const socialProviders = [];
-
-    // Category: StreamDeck Engine
-    if (directEngineEnabled) {
-      engineProviders.push({
-        id: 'direct',
-        name: 'StreamDeck Engine',
-        icon: 'movie-open-play',
-        color: Colors.accentPurple,
-        logoUrl: 'local_logo',
-        searchUrl: null,
-      });
-    }
-    
-    // Category: MovieBox Sources (Streaming Services)
-    (movieboxSources || [])
-      .filter(s => s.enabled)
-      .forEach((s, idx) => {
-        const mbDomain = s.url.trim();
-        const mbSearchDomain = mbDomain.replace('http://', '').replace('https://', '');
-        const appearance = getCustomProviderAppearance(s.name || mbSearchDomain, mbDomain);
-        movieboxProviders.push({
-          id: `moviebox_${idx}`,
-          name: s.name || mbSearchDomain,
-          icon: appearance.icon,
-          color: appearance.color,
-          logoUrl: null,
-          searchUrl: `https://${mbSearchDomain}/search?q=`,
-          appScheme: null,
-          customDomain: mbDomain,
-        });
-      });
-
-    // Category: Social/Generic (YouTube)
-    socialProviders.push({
-      id: 'youtube',
-      name: 'YouTube',
-      icon: 'youtube',
-      color: '#FF0000',
-      logoUrl: null,
-      searchUrl: 'https://www.youtube.com/results?search_query=',
-      appScheme: 'youtube://',
-    });
-
-    // 2. Set initial state (OTT will be empty/fetching)
-    const movieThumb = movie.backdrop_path 
-      ? getImageUrl(movie.backdrop_path) 
-      : (movie.poster_path ? getImageUrl(movie.poster_path) : movie.thumb);
-      
-    if (!forcedEpisode) {
-      setSelectedQuickItem({ name: title, mediaType, tmdbId, thumb: movieThumb });
-    }
-    setAvailableProviders([...engineProviders, ...movieboxProviders, ...socialProviders]);
-
-    // Check for DEFAULT PROVIDER before showing picker
-    const defaultId = await loadDefaultProvider();
-    if (defaultId) {
-      const allReadyProviders = [...engineProviders, ...movieboxProviders, ...socialProviders];
-      const defaultProvider = allReadyProviders.find(p => p.id === defaultId);
-      
-      if (defaultProvider) {
-        console.log(`[Home] Default provider found: ${defaultId}. Bypassing modal.`);
-        handleSelectProvider(defaultProvider, false, movie); // already saved, no need to save again
-        return;
-      }
-    }
-
-    setShowPicker(true);
-    console.log(`[Home] setShowPicker(true) called. Providers: ${engineProviders.length + movieboxProviders.length + socialProviders.length}`);
-
-    if (movie.isSports) {
-      const qName = movie.match?.quickAccessName || (movie.match?.type === 'football' ? 'Football' : 'IPL Live');
-      const nativeProviders = SPORTS_PROVIDER_CONFIG[qName] || [];
-      const formattedCustomProviders = customProviders.map((p, idx) => {
-        const appearance = getCustomProviderAppearance(p.name, p.url);
-        return {
-          id: `custom_${idx}`, name: p.name, url: p.url, color: appearance.color, icon: appearance.icon,
-        };
-      });
-
-      setAvailableProviders([...engineProviders, ...nativeProviders, ...formattedCustomProviders, ...movieboxProviders, ...socialProviders]);
-      return;
-    }
-
-    // 3. Fetch TMDB providers in background for Movies/TV
-    setIsFetchingProviders(true);
-    try {
-      const providers = await fetchWatchProviders(tmdbId, mediaType);
-      const fetchedOttProviders = [];
-      const seenIds = new Set();
-
-      if (providers?.flatrate) {
-        providers.flatrate.forEach(p => {
-          const mapped = OTT_PROVIDER_MAP[p.provider_id];
-          if (mapped && !seenIds.has(mapped.id)) {
-            seenIds.add(mapped.id);
-            fetchedOttProviders.push({
-              ...mapped,
-              logoUrl: p.logo_path 
-                ? `https://image.tmdb.org/t/p/w200${p.logo_path}` 
-                : mapped.logoUrl || null,
-            });
-          }
-        });
-      }
-      
-      // Merge with priority: Engine > OTT > MovieBox > Social
-      setAvailableProviders([
-        ...engineProviders,
-        ...fetchedOttProviders,
-        ...movieboxProviders,
-        ...socialProviders
-      ]);
-    } catch (e) {
-      console.warn('[Home] Failed to fetch TMDB providers:', e);
-    } finally {
-      setIsFetchingProviders(false);
-    }
+    contextOpenMediaDetails(item);
   };
 
 
-  const handleSelectEpisode = (episode, season) => {
-    setShowSeriesPicker(false);
-    
-    // Trigger provider selection immediately with the chosen episode
-    handlePlayPress({
-      ...selectedQuickItem,
-      id: selectedQuickItem.tmdbId,
-      mediaType: 'tv',
-      media_type: 'tv',
-      title: selectedQuickItem.name,
-      season: season.season_number,
-      episode: episode.episode_number,
-      episodeTitle: episode.name,
-      thumb: episode.still_path 
-        ? `https://image.tmdb.org/t/p/w400${episode.still_path}` 
-        : selectedQuickItem.thumb
-    }, episode);
-  };
-
-  const handleSelectProvider = async (provider, rememberChoice = false, forcedItem = null) => {
-    setShowPicker(false);
-    const movie = forcedItem || selectedQuickItem;
-    const title = movie?.name || movie?.title || '';
-    const mediaType = movie?.mediaType || movie?.media_type;
-    const tmdbId = movie?.tmdbId || movie?.id;
-
-    if (rememberChoice) {
-      console.log(`[Home] Saving ${provider.id} as default provider.`);
-      await saveDefaultProvider(provider.id);
-      if (Platform.OS === 'android') {
-        ToastAndroid.show(`${provider.name} set as default. Change this in Settings.`, ToastAndroid.LONG);
-      }
-    }
-
-    console.log(`[Home] Selecting Provider: ${provider.name} for ${title} (${mediaType}:${tmdbId})`);
-
-    // 4. Check for existing progress to resume automatically
-    let resumeTime = 0;
-    try {
-      const cwItems = await loadContinueWatching();
-      const s = movie.season || 1;
-      const e = movie.episode || 1;
-      
-      const existing = cwItems.find(i => {
-        if (mediaType === 'tv') {
-          return i.tmdbId === tmdbId && i.mediaType === 'tv' && i.season === s && i.episode === e;
-        }
-        return i.tmdbId === tmdbId && i.mediaType === mediaType;
-      });
-
-      if (existing) {
-        resumeTime = existing.currentTime || 0;
-        console.log(`[Home] Resuming ${title} (S${s}E${e}) from ${resumeTime}s`);
-      }
-    } catch (err) {}
-
-    const result = await navigateToOTT(
-      provider,
-      movie.episodeTitle || title,
-      tmdbId,
-      mediaType,
-      provider.customDomain,
-      navigation,
-      movie.season || 1,
-      movie.episode || 1,
-      resumeTime,
-      movie.thumb,
-      title // Pass the showName (original title)
-    );
-
-    if (result && result.status === 'unavailable') {
-      setRefreshing(false);
-      if (Platform.OS === 'android') {
-        ToastAndroid.show(
-          result.message || 'Not available on StreamDeck Engine. Try other sources.',
-          ToastAndroid.LONG
-        );
-      } else {
-        Alert.alert('Content Unavailable', result.message || 'Not available on StreamDeck Engine.');
-      }
-      // Re-open the modal so user can pick another source
-      setShowPicker(true);
-      return;
-    }
-
-    if (result && result.status === 'unverified') {
-      setRedirectInfo({ ...result, provider });
-      setShowRedirectWarning(true);
-    }
-  };
 
   const handleConfirmRedirect = () => {
     setShowRedirectWarning(false);
@@ -1013,7 +792,7 @@ const HomeScreen = ({ navigation }) => {
     );
   }
 
-  const isAnyModalOpen = showPicker || showProviderDropdown || showRedirectWarning || showSeriesPicker;
+  const isAnyModalOpen = showProviderDropdown || showRedirectWarning;
   
   return (
     <View style={styles.screen}>
@@ -1066,51 +845,7 @@ const HomeScreen = ({ navigation }) => {
 
         {/* World Cup 2026 Promo Banner */}
         {(selectedMediaType === 'all' || selectedMediaType === 'live') && (
-          <TouchableOpacity
-            style={styles.wcBannerContainer}
-            activeOpacity={0.85}
-            onPress={() => navigation.navigate('LiveTV', { expandWorldCup: true })}
-          >
-            <LinearGradient
-              colors={['#FFD700', '#0047A0', '#EF4444', '#10B981']} // Gold, USA Blue, Canada Red, Mexico Green
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={styles.wcBannerGradientBorder}
-            >
-              <View style={styles.wcBannerInner}>
-                <Image
-                  source={require('../assets/images/wc_bg.png')}
-                  style={[StyleSheet.absoluteFill, styles.wcBannerBackdrop]}
-                  resizeMode="cover"
-                  blurRadius={4}
-                />
-                <View style={[StyleSheet.absoluteFill, styles.wcBannerOverlay]} />
-                
-                <View style={styles.wcBannerContent}>
-                  <View style={styles.wcBannerLeft}>
-                    <View style={styles.wcBannerBadge}>
-                      <Ionicons name="trophy" size={12} color="#FFD700" style={{ marginRight: 4 }} />
-                      <Text style={styles.wcBannerBadgeText}>FIFA WORLD CUP 2026</Text>
-                    </View>
-                    <Text style={styles.wcBannerTitle}>Road to 2026</Text>
-                    <Text style={styles.wcBannerSubtitle}>USA • Canada • Mexico</Text>
-                  </View>
-                  
-                  <View style={styles.wcBannerRight}>
-                    <LinearGradient
-                      colors={['#FFD700', '#FFA500']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.wcBannerBtn}
-                    >
-                      <Text style={styles.wcBannerBtnText}>VIEW ALL</Text>
-                      <Ionicons name="chevron-forward" size={12} color="#000" />
-                    </LinearGradient>
-                  </View>
-                </View>
-              </View>
-            </LinearGradient>
-          </TouchableOpacity>
+          <WorldCupBanner navigation={navigation} />
         )}
 
         {/* Category Filter */}
@@ -1132,9 +867,9 @@ const HomeScreen = ({ navigation }) => {
         {/* Hero Spotlight */}
         <HeroSpotlight
           movies={filterContent(heroItems, selectedMediaType)}
-          onPlay={handlePlayPress}
+          onPlay={openMediaDetails}
           onAddToList={handleAddToLibrary}
-          paused={showPicker}
+          paused={false}
           watchlist={watchlist}
         />
 
@@ -1150,7 +885,7 @@ const HomeScreen = ({ navigation }) => {
           title="What's Trending Globally"
           movies={globalTrending}
           isLoading={loadingGlobal}
-          onMoviePress={handlePlayPress}
+          onMoviePress={openMediaDetails}
           watchlist={watchlist}
           onAddToList={handleAddToLibrary}
         />
@@ -1160,7 +895,7 @@ const HomeScreen = ({ navigation }) => {
           title={`What's Trending in ${regionName}`}
           movies={localTrending}
           isLoading={loadingLocal}
-          onMoviePress={handlePlayPress}
+          onMoviePress={openMediaDetails}
           watchlist={watchlist}
           onAddToList={handleAddToLibrary}
           titleExtra={
@@ -1182,7 +917,7 @@ const HomeScreen = ({ navigation }) => {
             showChevron={true}
             movies={providerTrendingCache[activeProvider.id] || []}
             isLoading={loadingProvider}
-            onMoviePress={handlePlayPress}
+            onMoviePress={openMediaDetails}
             watchlist={watchlist}
             onAddToList={handleAddToLibrary}
             style={{ marginBottom: 0 }}
@@ -1202,21 +937,7 @@ const HomeScreen = ({ navigation }) => {
         <View style={styles.bottomPadding} />
       </ScrollView>
 
-        <SeriesPickerModal
-          visible={showSeriesPicker}
-          item={selectedQuickItem}
-          continueWatching={continueWatching}
-          onClose={() => setShowSeriesPicker(false)}
-          onSelectEpisode={handleSelectEpisode}
-        />
 
-        <MediaProviderModal
-          visible={showPicker}
-          providers={availableProviders}
-          isFetching={isFetchingProviders}
-          onClose={() => setShowPicker(false)}
-          onSelectProvider={handleSelectProvider}
-        />
 
       <Modal 
         visible={showProviderDropdown} 
@@ -2265,20 +1986,17 @@ const styles = StyleSheet.create({
   wcBannerBadge: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'rgba(255, 215, 0, 0.15)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
     alignSelf: 'flex-start',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 215, 0, 0.3)',
     marginBottom: 6,
   },
   wcBannerBadgeText: {
     color: '#FFD700',
-    fontSize: 9,
+    fontSize: 16,
     fontWeight: '900',
-    letterSpacing: 1,
+    letterSpacing: 1.5,
+    textShadowColor: 'rgba(0, 0, 0, 0.95)',
+    textShadowOffset: { width: 0, height: 1.5 },
+    textShadowRadius: 4,
   },
   wcBannerTitle: {
     color: '#FFFFFF',

@@ -23,9 +23,13 @@ import {Colors, FontSizes, Spacing, BorderRadius} from '../theme/colors';
 import {useFocusEffect} from '@react-navigation/native';
 import { useWindowDimensions } from 'react-native';
 import Ionicons from 'react-native-vector-icons/Ionicons';
-import { addContinueWatchingEntry } from '../utils/storage';
+import { addContinueWatchingEntry, getSubtitlePreferences, getSkipPreferences } from '../utils/storage';
 import { syncWithCloud } from '../services/sync';
 import { checkDirectEngineAvailability } from '../utils/OTTNavigation';
+import { enrichWithOMDb } from '../services/omdb';
+import { fetchSubtitles, fetchSubtitleFile, cuesToVTT } from '../services/subtitles';
+import { fetchSkipSegments, getActiveSegment, getSkipTarget } from '../services/introdb';
+import { resolveStream } from '../services/febbox';
 
 const WebViewScreen = ({navigation, route}) => {
   const {
@@ -43,7 +47,7 @@ const WebViewScreen = ({navigation, route}) => {
   // Detect live sports — no cinematic loader, no continue watching
   const isLiveSports = type === 'live_sports';
 
-  const [isFullscreen, setIsFullscreen] = useState(type === 'direct_engine' || type === 'moviebox');
+  const [isFullscreen, setIsFullscreen] = useState(true);
   const [loading, setLoading] = useState(true);
   const [isPiPState, setIsPiPState] = useState(false);
   const [canGoBack, setCanGoBack] = useState(false);
@@ -56,10 +60,10 @@ const WebViewScreen = ({navigation, route}) => {
   );
   const [activeEngineSource, setActiveEngineSource] = useState(engineSource);
   const [metadata, setMetadata] = useState(null);
-  const progressWidth = useRef(new Animated.Value(0)).current;
-  const castAnims = useRef(
-    Array.from({ length: 12 }, () => new Animated.Value(0))
-  ).current;
+  const progressPercent = useRef(new Animated.Value(0)).current;
+  const progressWidth = progressPercent; // alias
+  const [progressDisplay, setProgressDisplay] = useState(0);
+  const progressAnimRef = useRef(null);
   const scrollViewRef = useRef(null);
   
   // For live sports, skip the loader entirely
@@ -67,6 +71,15 @@ const WebViewScreen = ({navigation, route}) => {
   const [isLoaderVisible, setIsLoaderVisible] = useState(isLiveSports ? false : true);
   const loaderOpacity = useRef(new Animated.Value(isLiveSports ? 0 : 1)).current;
   const [errorDetails, setErrorDetails] = useState(null);
+
+  // ── NEW: Subtitle, Skip, OMDb, FebBox state ──────────────
+  const [skipSegments, setSkipSegments] = useState([]);
+  const [activeSkipSegment, setActiveSkipSegment] = useState(null);
+  const [skipDismissed, setSkipDismissed] = useState(false);
+  const [omdbData, setOmdbData] = useState(null);
+  const [subtitleLoaded, setSubtitleLoaded] = useState(false);
+  const skipPrefsRef = useRef(null);
+  const subtitlePrefsRef = useRef(null);
 
   // Handle lazy resolution of Direct Engine to avoid UI freezes
   useEffect(() => {
@@ -87,7 +100,126 @@ const WebViewScreen = ({navigation, route}) => {
           setErrorDetails('Failed to connect to StreamDeck Engine.');
         });
     }
+    // Handle FebBox stream resolution
+    if (url === 'streamdeck://febbox') {
+      console.log('[WebView] Lazy loading FebBox stream...');
+      resolveStream(tmdbId, mediaType, season, episode)
+        .then(stream => {
+          if (stream) {
+            console.log('[WebView] FebBox stream resolved:', stream.type, stream.quality);
+            // Load the local HLS player page with the stream URL
+            const hlsPlayerUri = 'file:///android_asset/hlsPlayer.html';
+            const encodedUrl = encodeURIComponent(stream.url);
+            const playerUrl = `${hlsPlayerUri}?url=${encodedUrl}&t=${resumeTime || 0}`;
+            setActiveEngineSource('febbox');
+            setCurrentUrl(playerUrl);
+          } else {
+            setErrorDetails('FebBox: No stream found for this title. Check your token in Settings.');
+          }
+        })
+        .catch(err => {
+          console.error('[WebView] FebBox resolution failed:', err);
+          setErrorDetails('FebBox stream resolution failed. Please try another source.');
+        });
+    }
   }, [url, tmdbId, mediaType, season, episode, resumeTime]);
+
+  // ── NEW: Fetch skip segments (TheIntroDB) ────────────────
+  useEffect(() => {
+    if (!tmdbId) return;
+    (async () => {
+      try {
+        const prefs = await getSkipPreferences();
+        skipPrefsRef.current = prefs;
+        if (!prefs.enabled) return;
+
+        const segments = await fetchSkipSegments(
+          tmdbId,
+          mediaType === 'tv' ? season : undefined,
+          mediaType === 'tv' ? episode : undefined
+        );
+        if (segments.length > 0) {
+          console.log(`[WebView] Loaded ${segments.length} skip segments from TheIntroDB`);
+          setSkipSegments(segments);
+        }
+      } catch (e) {
+        console.warn('[WebView] Skip segments fetch failed:', e);
+      }
+    })();
+  }, [tmdbId, mediaType, season, episode]);
+
+  // ── NEW: Fetch OMDb ratings (lazy, enrichment only) ──────
+  useEffect(() => {
+    if (!tmdbId || !mediaType) return;
+    enrichWithOMDb(tmdbId, mediaType)
+      .then(data => {
+        if (data) {
+          console.log('[WebView] OMDb data loaded:', data.imdbRating, data.rottenTomatoes);
+          setOmdbData(data);
+        }
+      })
+      .catch(() => { /* non-critical */ });
+  }, [tmdbId, mediaType]);
+
+  // ── NEW: Load and inject subtitles ───────────────────────
+  useEffect(() => {
+    if (!tmdbId || !isPlayerReady || subtitleLoaded) return;
+    (async () => {
+      try {
+        const prefs = await getSubtitlePreferences();
+        subtitlePrefsRef.current = prefs;
+        if (!prefs.enabled) return;
+
+        const subs = await fetchSubtitles(
+          tmdbId, mediaType,
+          mediaType === 'tv' ? season : undefined,
+          mediaType === 'tv' ? episode : undefined,
+          prefs.language
+        );
+        if (subs.length === 0) return;
+
+        // Download the best subtitle file
+        const bestSub = subs[0];
+        const cues = await fetchSubtitleFile(bestSub.url);
+        if (cues.length === 0) return;
+
+        // Convert to VTT and inject into WebView
+        const vttContent = cuesToVTT(cues);
+        if (webViewRef.current && vttContent) {
+          webViewRef.current.injectJavaScript(`
+            (function() {
+              try {
+                var allFrames = document.querySelectorAll('iframe');
+                var cmd = { command: 'addSubtitleTrack', args: ['${btoa(vttContent)}', '${prefs.language}', '${bestSub.label}'] };
+                for (var i = 0; i < allFrames.length; i++) {
+                  try { allFrames[i].contentWindow.postMessage(JSON.stringify(cmd), '*'); } catch(e) {}
+                }
+                // Also try direct video element
+                var v = document.querySelector('video');
+                if (v) {
+                  var track = document.createElement('track');
+                  track.kind = 'subtitles';
+                  track.src = 'data:text/vtt;base64,' + '${btoa(vttContent)}';
+                  track.srclang = '${prefs.language}';
+                  track.label = '${bestSub.label}';
+                  track.default = true;
+                  v.appendChild(track);
+                  if (v.textTracks && v.textTracks.length > 0) {
+                    v.textTracks[v.textTracks.length - 1].mode = 'showing';
+                  }
+                }
+              } catch(e) { console.warn('Subtitle injection failed:', e); }
+            })();
+            true;
+          `);
+          console.log('[WebView] Subtitles injected:', bestSub.label);
+          setSubtitleLoaded(true);
+        }
+      } catch (e) {
+        console.warn('[WebView] Subtitle loading failed:', e);
+      }
+    })();
+  }, [tmdbId, mediaType, season, episode, isPlayerReady, subtitleLoaded]);
 
   // Activate the native Android Dialog Blocker to suppress ALL JS popups
   // (alert/confirm/prompt) from cross-origin iframes like CineSrc
@@ -162,18 +294,7 @@ const WebViewScreen = ({navigation, route}) => {
             } catch(e) {}
           }
           
-          // Trigger staggered pop animations for cast members
-          if (data.credits?.cast) {
-            castAnims.forEach(anim => anim.setValue(0));
-            Animated.stagger(250, castAnims.map(anim => 
-              Animated.spring(anim, {
-                toValue: 1,
-                tension: 50,
-                friction: 6,
-                useNativeDriver: true,
-              })
-            )).start();
-          }
+
         })
         .catch(err => console.warn('[WebView] Failed to fetch TMDB details:', err));
     }
@@ -182,46 +303,61 @@ const WebViewScreen = ({navigation, route}) => {
   // NOTE: Auto-scroll removed — it was fighting user manual scrolling.
   // Cast section is now freely scrollable by the user.
 
-  // Animated Progress Bar logic — single smooth curve instead of phased jumps
+  // Animated Progress Bar logic — linear progress with instant player-ready dismiss
   useEffect(() => {
     let timer;
     if (!isPlayerReady) {
       setIsLoaderVisible(true);
       loaderOpacity.setValue(1);
-      progressWidth.setValue(0);
+      progressPercent.setValue(0);
+      setProgressDisplay(0);
       
-      // Single smooth animation from 0→95 over 12s with decelerating curve
-      // This eliminates the visible "stuck at phase boundary" jumps
-      Animated.timing(progressWidth, {
-        toValue: 95,
-        duration: 12000,
-        easing: Easing.out(Easing.cubic),
+      // Single smooth LINEAR animation from 0→90 over 10s
+      const anim = Animated.timing(progressPercent, {
+        toValue: 90,
+        duration: 10000,
+        easing: Easing.linear,
         useNativeDriver: false,
-      }).start();
-    } else {
-      // 1. Synchronously stop any active progress animations (avoiding async callback bugs)
-      progressWidth.stopAnimation();
+      });
+      progressAnimRef.current = anim;
       
-      // 2. Animate progress bar to 100% and fade out the loader overlay in parallel
+      // Track numeric display
+      progressPercent.addListener(({ value }) => {
+        setProgressDisplay(Math.round(value));
+      });
+      
+      anim.start();
+    } else {
+      // Stop the fake progress animation immediately
+      if (progressAnimRef.current) {
+        progressAnimRef.current.stop();
+      }
+      progressPercent.stopAnimation();
+      
+      // Flash to 100% then fade out
       Animated.parallel([
-        Animated.timing(progressWidth, {
+        Animated.timing(progressPercent, {
           toValue: 100,
-          duration: 600,
-          easing: Easing.out(Easing.cubic),
+          duration: 300,
+          easing: Easing.linear,
           useNativeDriver: false,
         }),
-        Animated.timing(loaderOpacity, {
-          toValue: 0,
-          duration: 400,
-          easing: Easing.out(Easing.ease),
-          useNativeDriver: false,
-        })
+        Animated.sequence([
+          Animated.delay(200),
+          Animated.timing(loaderOpacity, {
+            toValue: 0,
+            duration: 400,
+            easing: Easing.out(Easing.ease),
+            useNativeDriver: false,
+          })
+        ])
       ]).start(() => {
         setIsLoaderVisible(false);
-        console.log('[WebView] Loader overlay successfully dismissed!');
+        setProgressDisplay(100);
+        console.log('[WebView] Loader overlay dismissed!');
       });
 
-      // Safety fallback: ensure loader is unmounted after 800ms even if Animated hangs on Fabric/Bridgeless
+      // Safety fallback
       timer = setTimeout(() => {
         setIsLoaderVisible(false);
       }, 800);
@@ -229,6 +365,7 @@ const WebViewScreen = ({navigation, route}) => {
 
     return () => {
       if (timer) clearTimeout(timer);
+      progressPercent.removeAllListeners();
     };
   }, [isPlayerReady]);
 
@@ -482,6 +619,33 @@ const WebViewScreen = ({navigation, route}) => {
           if (!isPlayerReady) {
             console.log('[WebView] Active playback detected via timeupdate - marking player ready');
             setIsPlayerReady(true);
+          }
+
+          // ── Skip segment detection ──────────────────────
+          if (skipSegments.length > 0 && rawCurrentTime !== undefined) {
+            const active = getActiveSegment(skipSegments, rawCurrentTime);
+            if (active && !skipDismissed) {
+              setActiveSkipSegment(active);
+              // Auto-skip if enabled
+              if (skipPrefsRef.current?.autoSkip) {
+                const target = getSkipTarget(active);
+                webViewRef.current?.injectJavaScript(`
+                  (function() {
+                    var v = document.querySelector('video');
+                    if (v) { v.currentTime = ${target}; }
+                    var frames = document.querySelectorAll('iframe');
+                    for (var i = 0; i < frames.length; i++) {
+                      try { frames[i].contentWindow.postMessage({ command: 'seek', args: [${target}] }, '*'); } catch(e) {}
+                    }
+                  })();
+                  true;
+                `);
+                setActiveSkipSegment(null);
+              }
+            } else if (!active) {
+              setActiveSkipSegment(null);
+              setSkipDismissed(false);
+            }
           }
         }
       } else if (data.type === 'cinesrc:seeked' || data.type === 'cinesrc:seeking') {
@@ -1430,7 +1594,7 @@ const WebViewScreen = ({navigation, route}) => {
       )}
 
       {/* WebView */}
-      {currentUrl && currentUrl !== 'streamdeck://direct' && (
+      {currentUrl && currentUrl !== 'streamdeck://direct' && currentUrl !== 'streamdeck://febbox' && (
         <WebView
           ref={webViewRef}
         source={webViewSource}
@@ -1629,115 +1793,69 @@ const WebViewScreen = ({navigation, route}) => {
                 {metadata?.tagline ? (
                   <Text style={styles.loadingTagline}>"{metadata.tagline}"</Text>
                 ) : null}
- 
-                {/* Animated Progress Bar */}
-                <View style={styles.progressBarBg}>
-                  <Animated.View 
-                    style={[
-                      styles.progressBarFill, 
-                      { 
-                        width: progressWidth.interpolate({
-                          inputRange: [0, 100],
-                          outputRange: ['0%', '100%'],
-                        }) 
-                      }
-                    ]} 
-                  >
-                    <LinearGradient
-                      colors={[themeColor, Colors.accentPink]}
-                      start={{x: 0, y: 0}}
-                      end={{x: 1, y: 0}}
-                      style={StyleSheet.absoluteFill}
-                    />
-                  </Animated.View>
-                </View>
- 
-                {/* Dynamic Cast / Engagement Info */}
-                {metadata?.credits && (metadata.credits.cast?.length > 0 || metadata.credits.crew?.length > 0) ? (
-                  <View style={[styles.castContainer, { borderColor: themeColor + '20' }]}>
-                    <Text style={[styles.castTitle, { color: themeColor }]}>STARRING & CREATIVE TEAM</Text>
-                    <ScrollView 
-                      style={styles.scrollView}
-                      contentContainerStyle={styles.actorsGrid}
-                      showsVerticalScrollIndicator={true}
-                      nestedScrollEnabled={true}
-                    >
-                      {(() => {
-                        const director = metadata.credits.crew?.find(c => c.job === 'Director');
-                        const castList = metadata.credits.cast || [];
-                        const items = [];
-                        
-                        if (director) {
-                          items.push({
-                            id: `dir-${director.id || director.name}`,
-                            name: director.name,
-                            role: 'Director',
-                            profile_path: director.profile_path,
-                          });
-                        }
-                        castList.forEach(actor => {
-                          items.push({
-                            id: `act-${actor.id || actor.name}`,
-                            name: actor.name,
-                            role: actor.character || 'Actor',
-                            profile_path: actor.profile_path,
-                          });
-                        });
- 
-                        const displayItems = items.slice(0, 12);
- 
-                        return displayItems.map((item, index) => {
-                          // Interpolate opacity and scale based on progress (0 to 90) to be in perfect sync
-                          const opacity = progressWidth.interpolate({
-                            inputRange: [index * 7.5, Math.min(90, (index + 0.8) * 7.5)],
-                            outputRange: [0, 1],
-                            extrapolate: 'clamp',
-                          });
-                          
-                          const scale = progressWidth.interpolate({
-                            inputRange: [index * 7.5, Math.min(90, (index + 0.8) * 7.5)],
-                            outputRange: [0.6, 1],
-                            extrapolate: 'clamp',
-                          });
- 
-                          return (
-                            <Animated.View 
-                              key={item.id || index}
-                              style={[
-                                styles.actorCard, 
-                                { 
-                                  opacity, 
-                                  transform: [{ scale }] 
-                                }
-                              ]}
-                            >
-                              {item.profile_path ? (
-                                <Image 
-                                  source={{ uri: `https://image.tmdb.org/t/p/w185${item.profile_path}` }} 
-                                  style={[styles.actorImage, { borderColor: themeColor + '50' }]} 
-                                />
-                              ) : (
-                                <View style={[styles.actorPlaceholder, { borderColor: themeColor + '30' }]}>
-                                  <Ionicons name="person" size={20} color="rgba(255,255,255,0.4)" />
-                                </View>
-                              )}
-                              <Text style={styles.actorName} numberOfLines={1}>{item.name}</Text>
-                              <Text style={styles.actorCharacter} numberOfLines={1}>{item.role || ''}</Text>
-                            </Animated.View>
-                          );
-                        });
-                      })()}
-                    </ScrollView>
-                  </View>
-                ) : (
-                  <View style={[styles.engagementContainer, { borderColor: themeColor + '20' }]}>
-                    <Text style={[styles.engagementTitle, { color: themeColor }]}>PREPARATION</Text>
-                    <Text style={styles.engagementText}>
-                      Optimizing secure playback tunnels...
-                    </Text>
+
+                {/* OMDb Multi-Source Ratings */}
+                {omdbData && (omdbData.imdbRating || omdbData.rottenTomatoes || omdbData.metacritic) && (
+                  <View style={styles.omdbRatingsRow}>
+                    {omdbData.imdbRating && (
+                      <View style={[styles.ratingPill, { backgroundColor: 'rgba(245, 197, 24, 0.15)', borderColor: 'rgba(245, 197, 24, 0.3)' }]}>
+                        <Text style={{ fontSize: 12 }}>⭐</Text>
+                        <Text style={[styles.ratingValue, { color: '#F5C518' }]}>{omdbData.imdbRating}</Text>
+                        <Text style={styles.ratingLabel}>IMDb</Text>
+                      </View>
+                    )}
+                    {omdbData.rottenTomatoes && (
+                      <View style={[styles.ratingPill, { backgroundColor: 'rgba(250, 82, 56, 0.15)', borderColor: 'rgba(250, 82, 56, 0.3)' }]}>
+                        <Text style={{ fontSize: 12 }}>🍅</Text>
+                        <Text style={[styles.ratingValue, { color: '#FA5238' }]}>{omdbData.rottenTomatoes}</Text>
+                        <Text style={styles.ratingLabel}>RT</Text>
+                      </View>
+                    )}
+                    {omdbData.metacritic && (
+                      <View style={[styles.ratingPill, { backgroundColor: 'rgba(102, 204, 51, 0.15)', borderColor: 'rgba(102, 204, 51, 0.3)' }]}>
+                        <Text style={{ fontSize: 10, fontWeight: '900', color: '#66CC33' }}>M</Text>
+                        <Text style={[styles.ratingValue, { color: '#66CC33' }]}>{omdbData.metacritic}</Text>
+                        <Text style={styles.ratingLabel}>Meta</Text>
+                      </View>
+                    )}
                   </View>
                 )}
-                
+
+                {omdbData?.awards && (
+                  <View style={styles.awardsBadge}>
+                    <Ionicons name="trophy" size={12} color="#FFD700" />
+                    <Text style={styles.awardsText} numberOfLines={1}>{omdbData.awards}</Text>
+                  </View>
+                )}
+ 
+                {/* Animated Progress Bar with % label */}
+                <View style={{ width: '100%', marginTop: 16 }}>
+                  <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                    <Text style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11, fontWeight: '600', letterSpacing: 0.5 }}>LOADING</Text>
+                    <Text style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, fontWeight: '800' }}>{progressDisplay}%</Text>
+                  </View>
+                  <View style={styles.progressBarBg}>
+                    <Animated.View 
+                      style={[
+                        styles.progressBarFill, 
+                        { 
+                          width: progressPercent.interpolate({
+                            inputRange: [0, 100],
+                            outputRange: ['0%', '100%'],
+                          }) 
+                        }
+                      ]} 
+                    >
+                      <LinearGradient
+                        colors={[themeColor, Colors.accentPink]}
+                        start={{x: 0, y: 0}}
+                        end={{x: 1, y: 0}}
+                        style={StyleSheet.absoluteFill}
+                      />
+                    </Animated.View>
+                  </View>
+                </View>
+ 
                 <Text style={styles.loadingStatusText}>
                   {isPlayerReady ? 'Starting playback...' : 'Optimizing connection speed...'}
                 </Text>
@@ -1786,11 +1904,147 @@ const WebViewScreen = ({navigation, route}) => {
           </TouchableOpacity>
         </View>
       )}
+      {/* ── Skip Intro/Recap/Credits Button Overlay ──────── */}
+      {activeSkipSegment && !skipDismissed && isPlayerReady && (
+        <View style={styles.skipBtnContainer}>
+          <TouchableOpacity
+            style={styles.skipBtn}
+            activeOpacity={0.8}
+            onPress={() => {
+              const target = getSkipTarget(activeSkipSegment);
+              webViewRef.current?.injectJavaScript(`
+                (function() {
+                  var v = document.querySelector('video');
+                  if (v) { v.currentTime = ${target}; }
+                  var frames = document.querySelectorAll('iframe');
+                  for (var i = 0; i < frames.length; i++) {
+                    try { frames[i].contentWindow.postMessage({ command: 'seek', args: [${target}] }, '*'); } catch(e) {}
+                  }
+                })();
+                true;
+              `);
+              setActiveSkipSegment(null);
+              setSkipDismissed(true);
+            }}
+          >
+            <LinearGradient
+              colors={['rgba(139, 92, 246, 0.85)', 'rgba(236, 72, 153, 0.85)']}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.skipBtnGradient}
+            >
+              <Ionicons name={activeSkipSegment.icon || 'play-skip-forward'} size={16} color="#fff" />
+              <Text style={styles.skipBtnText}>{activeSkipSegment.label}</Text>
+            </LinearGradient>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={styles.skipDismissBtn}
+            onPress={() => setSkipDismissed(true)}
+            activeOpacity={0.7}
+          >
+            <Ionicons name="close" size={14} color="rgba(255,255,255,0.6)" />
+          </TouchableOpacity>
+        </View>
+      )}
     </View>
   );
 };
 
 const styles = StyleSheet.create({
+  // ── Skip Button Overlay ────────────────────────────
+  skipBtnContainer: {
+    position: 'absolute',
+    bottom: 90,
+    right: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
+    zIndex: 10000,
+    gap: 6,
+  },
+  skipBtn: {
+    borderRadius: 24,
+    overflow: 'hidden',
+    elevation: 8,
+    shadowColor: '#8b5cf6',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.4,
+    shadowRadius: 8,
+  },
+  skipBtnGradient: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 18,
+    paddingVertical: 10,
+    gap: 8,
+  },
+  skipBtnText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  skipDismissBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.15)',
+  },
+
+  // ── OMDb Ratings ───────────────────────────────────
+  omdbRatingsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 4,
+  },
+  ratingPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 16,
+    borderWidth: 1,
+    gap: 4,
+  },
+  ratingValue: {
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  ratingLabel: {
+    fontSize: 9,
+    fontWeight: '600',
+    color: 'rgba(255,255,255,0.4)',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  awardsBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: 6,
+    marginBottom: 2,
+    paddingHorizontal: 12,
+    paddingVertical: 4,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 215, 0, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 215, 0, 0.15)',
+    alignSelf: 'center',
+  },
+  awardsText: {
+    color: 'rgba(255, 215, 0, 0.8)',
+    fontSize: 10,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
+
   topBar: {
     flexDirection: 'row',
     alignItems: 'center',

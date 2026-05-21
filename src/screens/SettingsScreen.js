@@ -127,6 +127,7 @@ const SettingsScreen = ({ navigation }) => {
     streaming: false,
     sports: false,
     playback: false,
+    extensions: false,
     debrid: false,
     data: false
   });
@@ -808,6 +809,78 @@ const SettingsScreen = ({ navigation }) => {
                   You can set a default anytime from the "Available On" modal by checking the "Always use this" box.
                 </Text>
               </View>
+            </View>
+          )}
+        </View>
+
+        {/* Extensions & Add-ons */}
+        <View style={styles.section}>
+          <CollapsibleHeader 
+            title="EXTENSIONS & ADD-ONS" 
+            sectionKey="extensions"
+            isExpanded={expandedSections.extensions}
+            onToggle={toggleSection}
+            subtitle="API Integrations"
+          />
+          {expandedSections.extensions && (
+            <View style={styles.card}>
+              <Text style={styles.fieldLabel}>Integrations</Text>
+              <Text style={styles.fieldHint}>
+                Enable experimental third-party integrations for enhanced streaming features.
+              </Text>
+              
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleInfo}>
+                  <Text style={styles.toggleTitle}>FebBox Protocol</Text>
+                  <Text style={styles.toggleDesc}>Advanced streaming sources and cloud drive integration.</Text>
+                </View>
+                <Switch
+                  value={settings.febboxEnabled}
+                  onValueChange={(val) => setSettings(prev => ({...prev, febboxEnabled: val}))}
+                  trackColor={{ false: '#333', true: 'rgba(16, 185, 129, 0.4)' }}
+                  thumbColor={settings.febboxEnabled ? '#10b981' : '#666'}
+                />
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleInfo}>
+                  <Text style={styles.toggleTitle}>Wyzie Subtitles</Text>
+                  <Text style={styles.toggleDesc}>Auto-fetch missing subtitles globally.</Text>
+                </View>
+                <Switch
+                  value={settings.wyzieEnabled}
+                  onValueChange={(val) => setSettings(prev => ({...prev, wyzieEnabled: val}))}
+                  trackColor={{ false: '#333', true: 'rgba(16, 185, 129, 0.4)' }}
+                  thumbColor={settings.wyzieEnabled ? '#10b981' : '#666'}
+                />
+              </View>
+
+              <View style={styles.toggleRow}>
+                <View style={styles.toggleInfo}>
+                  <Text style={styles.toggleTitle}>Skip Intro (IntroDB)</Text>
+                  <Text style={styles.toggleDesc}>Show skip buttons for intros, recaps, and credits.</Text>
+                </View>
+                <Switch
+                  value={settings.skipIntroEnabled}
+                  onValueChange={(val) => setSettings(prev => ({...prev, skipIntroEnabled: val}))}
+                  trackColor={{ false: '#333', true: 'rgba(16, 185, 129, 0.4)' }}
+                  thumbColor={settings.skipIntroEnabled ? '#10b981' : '#666'}
+                />
+              </View>
+
+              <View style={[styles.toggleRow, { borderBottomWidth: 0, paddingBottom: 0 }]}>
+                <View style={styles.toggleInfo}>
+                  <Text style={styles.toggleTitle}>OMDb Ratings</Text>
+                  <Text style={styles.toggleDesc}>Display multi-source ratings (IMDb, Rotten Tomatoes, Metacritic).</Text>
+                </View>
+                <Switch
+                  value={settings.omdbEnabled}
+                  onValueChange={(val) => setSettings(prev => ({...prev, omdbEnabled: val}))}
+                  trackColor={{ false: '#333', true: 'rgba(16, 185, 129, 0.4)' }}
+                  thumbColor={settings.omdbEnabled ? '#10b981' : '#666'}
+                />
+              </View>
+
             </View>
           )}
         </View>
@@ -1556,6 +1629,29 @@ const styles = StyleSheet.create({
     color: Colors.textMuted,
     marginBottom: Spacing.md,
     lineHeight: 22,
+  },
+  toggleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255,255,255,0.05)',
+  },
+  toggleInfo: {
+    flex: 1,
+    marginRight: 16,
+  },
+  toggleTitle: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: Colors.textPrimary,
+    marginBottom: 4,
+  },
+  toggleDesc: {
+    fontSize: 13,
+    color: Colors.textMuted,
+    lineHeight: 18,
   },
   searchContainer: {
     flexDirection: 'row',

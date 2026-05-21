@@ -10,6 +10,8 @@ const KEYS = {
   TMDB_HOME_CACHE: 'tmdb_home_cache_v7',
   SETTINGS: 'streamdeck_settings',
   DEFAULT_PROVIDER: 'default_streaming_provider',
+  SUBTITLE_PREFS: 'sdm_subtitle_preferences',
+  SKIP_PREFS: 'sdm_skip_preferences',
 };
 
 const CW_MAX_ITEMS = 15;
@@ -294,6 +296,10 @@ export function getDefaultSettings() {
     directEngineEnabled: true,
     directEnginePriority: ['cinesrc'],
     defaultProviderId: null,
+    febboxEnabled: false, // FebBox Opt-in
+    wyzieEnabled: true, // Auto-subtitles Opt-in
+    skipIntroEnabled: true, // IntroDB Skip Intro Opt-in
+    omdbEnabled: true, // OMDb Ratings Opt-in
   };
 }
 
@@ -382,5 +388,56 @@ export async function saveDefaultProvider(providerId) {
     }
   } catch (e) {
     console.warn('[Storage] Failed to save default provider:', e);
+  }
+}
+
+// ============================================
+// Subtitle Preferences
+// ============================================
+export async function getSubtitlePreferences() {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.SUBTITLE_PREFS);
+    if (data) return JSON.parse(data);
+  } catch (e) { /* use defaults */ }
+  return {
+    enabled: true,
+    language: 'en', // ISO 639-1 code
+    fontSize: 16,
+    backgroundOpacity: 0.6,
+    position: 'bottom', // 'bottom' or 'top'
+  };
+}
+
+export async function saveSubtitlePreferences(prefs) {
+  try {
+    await AsyncStorage.setItem(KEYS.SUBTITLE_PREFS, JSON.stringify(prefs));
+  } catch (e) {
+    console.warn('[Storage] Failed to save subtitle prefs:', e);
+  }
+}
+
+// ============================================
+// Skip Control Preferences
+// ============================================
+export async function getSkipPreferences() {
+  try {
+    const data = await AsyncStorage.getItem(KEYS.SKIP_PREFS);
+    if (data) return JSON.parse(data);
+  } catch (e) { /* use defaults */ }
+  return {
+    enabled: true,
+    autoSkip: false, // false = show button, true = auto-skip
+    skipIntro: true,
+    skipRecap: true,
+    skipCredits: true,
+    skipPreview: true,
+  };
+}
+
+export async function saveSkipPreferences(prefs) {
+  try {
+    await AsyncStorage.setItem(KEYS.SKIP_PREFS, JSON.stringify(prefs));
+  } catch (e) {
+    console.warn('[Storage] Failed to save skip prefs:', e);
   }
 }

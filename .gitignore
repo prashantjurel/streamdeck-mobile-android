@@ -91,6 +91,10 @@ tvos/
 # Exclude local test APKs
 *.apk
 
+# App Secrets (API keys, tokens — obfuscated but still sensitive)
+src/config/secrets.js
+!src/config/secrets.example.js
+
 # Firebase & Credentials
 android/app/google-services.json
 android/app/*.jks

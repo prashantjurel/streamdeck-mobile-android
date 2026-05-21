@@ -1,5 +1,6 @@
 import {Linking} from 'react-native';
 import { getCurrentUser } from '../services/auth';
+import { resolveStream, isFebBoxAvailable } from '../services/febbox';
 
 /**
  * Central registry for all OTT providers supported in the app.
@@ -34,6 +35,10 @@ const buildEngineUrl = (engineId, tmdbId, mediaType, s = 1, e = 1, resumeTime = 
         return `https://cinesrc.st/embed/movie/${tmdbId}?${commonCineParams}`;
       }
       return `https://cinesrc.st/embed/tv/${tmdbId}?s=${s}&e=${e}&${commonCineParams}`;
+    
+    case 'febbox':
+      // FebBox uses the local HLS player page — URL is resolved dynamically
+      return `febbox://resolve/${tmdbId}/${mediaType}/${s}/${e}?t=${t}`;
     
     default:
       return null;
@@ -138,6 +143,14 @@ export const navigateToOTT = async (provider, movieTitle, tmdbId, mediaType, mov
       finalName = `StreamDeck Engine`;
       engineSource = 'direct'; 
     }
+  }
+
+  // Case A-bis: FebBox Source (resolves HLS stream → local player)
+  if (!finalUrl && provider.id === 'febbox') {
+    finalUrl = 'streamdeck://febbox';
+    finalId = 'febbox';
+    finalName = 'FebBox Stream';
+    engineSource = 'febbox';
   }
 
   // Case B: MovieBox Custom Domains

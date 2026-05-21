@@ -1,6 +1,14 @@
-// StreamDeck Mobile — Hero Spotlight (Vertical Stacked Carousel)
-// Inspired by JioHotstar's stacked card UI — side-peeking stack
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+// StreamDeck Mobile — Hero Spotlight (Smooth Carousel v2)
+// Architecture: GestureHandler + Reanimated + translateX/scale (no width animation)
+//
+// KEY CHANGES FROM v1:
+// 1. PanResponder → GestureHandler PanGesture (runs on UI thread)
+// 2. Width animation → translateX + scale (transform-only = no layout recalc)
+// 3. Image loading extracted to HeroCardImage (no re-renders on scroll)
+// 4. Animated dot pagination with smooth morphing
+// 5. withSpring velocity passthrough for physics-based feel
+//
+import React, { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import {
   View,
   Text,
@@ -8,7 +16,6 @@ import {
   TouchableOpacity,
   Image,
   useWindowDimensions,
-  PanResponder,
   Platform,
 } from 'react-native';
 import Animated, {
@@ -21,16 +28,22 @@ import Animated, {
   interpolate,
   Extrapolation,
   Easing,
+  runOnJS,
+  useAnimatedReaction,
 } from 'react-native-reanimated';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import LinearGradient from 'react-native-linear-gradient';
 import { Colors, Spacing } from '../theme/colors';
-import { getImageUrl } from '../services/tmdb';
+import { getImageUrl, getNowPlayingIds } from '../services/tmdb';
+import HeroCardImage, { prefetchHeroImages } from './HeroCardImage';
 import Ionicons from 'react-native-vector-icons/Ionicons';
 
 const CARD_HEIGHT = 520;
-const ANIM_DURATION = 1400;
-const AUTO_PLAY_MS = 8000;
+const AUTO_PLAY_MS = 6000;
 
+// ═══════════════════════════════════════════════════════════
+// BlinkingLiveBadge (unchanged from v1)
+// ═══════════════════════════════════════════════════════════
 const BlinkingLiveBadge = memo(({ style }) => {
   const opacity = useSharedValue(1);
 
@@ -60,11 +73,9 @@ const BlinkingLiveBadge = memo(({ style }) => {
 // TeamLogo — Logo with initials fallback
 const TeamLogo = memo(({ uri, initials }) => {
   const [error, setError] = useState(false);
-
   if (error || !uri) {
     return <Text style={styles.teamInitials}>{initials || '?'}</Text>;
   }
-
   return (
     <Image
       source={{ uri }}
@@ -75,11 +86,10 @@ const TeamLogo = memo(({ uri, initials }) => {
   );
 });
 
-// Team colors dictionary for World Cup matches
+// Team colors dictionary for World Cup
 const getTeamColors = (teamName) => {
   if (!teamName) return { primary: '#FFD700', secondary: '#00E676' };
   const name = teamName.toLowerCase().trim();
-  
   if (name.includes('argenti')) return { primary: '#74ACDF', secondary: '#003087' };
   if (name.includes('portug')) return { primary: '#E42518', secondary: '#118C4F' };
   if (name.includes('brazil') || (name.includes('bra') && name.length === 3)) return { primary: '#FFDF00', secondary: '#009B3A' };
@@ -88,62 +98,36 @@ const getTeamColors = (teamName) => {
   if (name.includes('franc')) return { primary: '#002395', secondary: '#ED2939' };
   if (name.includes('croat')) return { primary: '#FF0000', secondary: '#11457E' };
   if (name.includes('engla')) return { primary: '#E21E26', secondary: '#0B1F3F' };
-  if (name.includes('norwa')) return { primary: '#BA0C2F', secondary: '#00205B' };
-  if (name.includes('mexic')) return { primary: '#006847', secondary: '#CE1126' };
-  if (name.includes('united states') || name.includes('usa') || name.includes('u.s.')) return { primary: '#002868', secondary: '#BF0A30' };
-  if (name.includes('canad')) return { primary: '#FF0000', secondary: '#FFFFFF' };
+  if (name.includes('united states') || name.includes('usa')) return { primary: '#002868', secondary: '#BF0A30' };
   if (name.includes('nether')) return { primary: '#FF4F00', secondary: '#FFFFFF' };
   if (name.includes('ital')) return { primary: '#004B87', secondary: '#CD212A' };
-  if (name.includes('saudi')) return { primary: '#006C35', secondary: '#FFFFFF' };
   if (name.includes('japan')) return { primary: '#E10714', secondary: '#002E73' };
-  if (name.includes('seneg')) return { primary: '#FDEF42', secondary: '#00853F' };
   if (name.includes('moroc')) return { primary: '#C1272D', secondary: '#006233' };
-  if (name.includes('austra')) return { primary: '#FFCD00', secondary: '#00008B' };
-  if (name.includes('belgi')) return { primary: '#FFD300', secondary: '#E30613' };
-  if (name.includes('switze')) return { primary: '#D52B1E', secondary: '#FFFFFF' };
-  if (name.includes('denma')) return { primary: '#C8102E', secondary: '#FFFFFF' };
-  if (name.includes('urugu')) return { primary: '#87CEEB', secondary: '#0038A8' };
-  if (name.includes('colomb')) return { primary: '#FCD116', secondary: '#003893' };
-  if (name.includes('austri')) return { primary: '#ED2939', secondary: '#FFFFFF' };
-  if (name.includes('peru')) return { primary: '#D91414', secondary: '#FFFFFF' };
-  if (name.includes('nigeri')) return { primary: '#008751', secondary: '#FFFFFF' };
-  if (name.includes('hondur')) return { primary: '#0073CF', secondary: '#FFFFFF' };
-  if (name.includes('costa')) return { primary: '#CE1126', secondary: '#002B7F' };
-  if (name.includes('congo') || name.includes('dr congo')) return { primary: '#007FFF', secondary: '#FDD017' };
-  if (name.includes('ghana')) return { primary: '#FFD300', secondary: '#E30613' };
-  if (name.includes('panam')) return { primary: '#0051BA', secondary: '#DA121A' };
-  if (name.includes('qatar')) return { primary: '#8A1538', secondary: '#FFFFFF' };
-  if (name.includes('algeri')) return { primary: '#006633', secondary: '#D21034' };
-  if (name.includes('ecuad')) return { primary: '#FFDD00', secondary: '#002F6C' };
-  if (name.includes('south africa') || name.includes('rsa')) return { primary: '#007A4D', secondary: '#DE3831' };
   if (name.includes('south korea') || name.includes('kor')) return { primary: '#CD2E3A', secondary: '#0047A0' };
-  if (name.includes('wales')) return { primary: '#D41E24', secondary: '#00AD43' };
-  if (name.includes('chile')) return { primary: '#0039A6', secondary: '#D52B1E' };
-  if (name.includes('polan')) return { primary: '#DC143C', secondary: '#FFFFFF' };
-  if (name.includes('uzbek')) return { primary: '#0099B5', secondary: '#1EB940' };
-  if (name.includes('turke') || name.includes('türki')) return { primary: '#E30A17', secondary: '#FFFFFF' };
-  if (name.includes('tunis')) return { primary: '#E30A17', secondary: '#FFFFFF' };
-  if (name.includes('czech')) return { primary: '#11457E', secondary: '#D7141A' };
-  if (name.includes('iraq')) return { primary: '#DA121A', secondary: '#007A3E' };
-  if (name.includes('jorda')) return { primary: '#DA121A', secondary: '#007A3E' };
-  if (name.includes('curac')) return { primary: '#002B7F', secondary: '#FDD017' };
-  if (name.includes('cabo') || name.includes('cape verde')) return { primary: '#002B7F', secondary: '#DA121A' };
-  
   return { primary: '#FFD700', secondary: '#00E676' };
 };
 
-const HERO_PLACEHOLDER = require('../assets/images/poster_placeholder.jpg');
-
-const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
-  // Prefer backdrop (wide), fall back to poster (tall) if backdrop is missing.
-  // Some TMDB trending items omit backdrop_path — this prevents a permanent placeholder.
-  // Use w1280 (not original) — full-res JPEGs are 2-3MB and cause visible placeholder delay.
+// ═══════════════════════════════════════════════════════════
+// HeroCard — The visible card content (poster + gradient + metadata)
+// ═══════════════════════════════════════════════════════════
+const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved, cardWidth }) => {
   const rawPath = movie.backdrop_path || movie.poster_path || null;
   const backdropUrl = typeof rawPath === 'number' ? rawPath : getImageUrl(rawPath, 'w1280');
   const title = movie.title || movie.name || 'Unknown';
   const isSports = movie.isSports;
 
-  // ── Dynamic metadata — only show fields that exist ────
+  const [inCinemas, setInCinemas] = useState(false);
+
+  useEffect(() => {
+    if (!isSports && movie.media_type !== 'tv') {
+      getNowPlayingIds().then(ids => {
+        if (ids && ids.has(movie.id)) {
+          setInCinemas(true);
+        }
+      });
+    }
+  }, [movie.id, movie.media_type, isSports]);
+
   const buildMeta = () => {
     if (isSports) {
       const m = movie.match || {};
@@ -176,17 +160,7 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
     return parts;
   };
 
-  const [currentBackdrop, setCurrentBackdrop] = useState(backdropUrl);
-  const [backdropLoaded, setBackdropLoaded] = useState(false);
-
-  // Sync state with prop whenever backdropUrl changes
-  useEffect(() => {
-    setCurrentBackdrop(backdropUrl);
-    setBackdropLoaded(false);
-  }, [backdropUrl]);
-
   const metaParts = buildMeta();
-
   const team1Colors = getTeamColors(movie.match?.team1);
   const team2Colors = getTeamColors(movie.match?.team2);
 
@@ -208,443 +182,391 @@ const HeroCard = memo(({ movie, onPlay, onAddToList, isSaved }) => {
 
   return (
     <CardWrapper
-      style={[styles.heroCard, movie.isWorldCup && { padding: 2.5 }]}
+      style={[styles.heroCard, { width: cardWidth }, movie.isWorldCup && { padding: 2.5 }]}
       {...wrapperProps}
     >
       <InnerWrapper {...innerWrapperProps}>
-      {/* Placeholder backdrop — always visible until real image loads */}
-      <Image
-        source={HERO_PLACEHOLDER}
-        style={[styles.poster, styles.heroPlaceholder]}
-        resizeMode="cover"
-        blurRadius={2}
-      />
+        {/* Image with crossfade */}
+        <HeroCardImage
+          backdropPath={backdropUrl}
+          isSports={isSports}
+          isWorldCup={movie.isWorldCup}
+          matchType={movie.match?.type}
+        />
 
-      {/* Actual backdrop — fades in on load */}
-      <Image
-        source={typeof currentBackdrop === 'string' ? { uri: currentBackdrop } : currentBackdrop}
-        style={[styles.poster, backdropLoaded ? styles.heroBackdropVisible : styles.heroBackdropHidden]}
-        resizeMode="cover"
-        blurRadius={movie.isWorldCup ? 4 : 0}
-        onLoad={() => setBackdropLoaded(true)}
-        onError={() => {
-          // If the primary image fails, use a high-quality sport-specific fallback
-          const fallback = movie.isWorldCup
-            ? require('../assets/images/wc_bg.png')
-            : (isSports
-              ? (movie.match?.type === 'f1'
-                ? 'https://images.unsplash.com/photo-1551221281-224451000632?q=80&w=1200'
-                : 'https://images.unsplash.com/photo-1522778119026-d647f0596c20?q=80&w=1200')
-              : 'https://images.unsplash.com/photo-1489599849927-2ee91cede3ba?q=80&w=1200');
-          setCurrentBackdrop(typeof fallback === 'number' ? fallback : { uri: fallback });
-          setBackdropLoaded(true);
-        }}
-      />
+        {/* Dimming overlay */}
+        <View style={[styles.posterDimmer, movie.isWorldCup && styles.wcPosterDimmer]} />
 
-      {/* Dimming overlay on top of the poster image */}
-      <View style={[styles.posterDimmer, movie.isWorldCup && styles.wcPosterDimmer]} />
+        {/* WC Top Banner */}
+        {movie.isWorldCup && (
+          <LinearGradient
+            colors={['rgba(2, 44, 34, 0.95)', 'rgba(6, 78, 59, 0.8)', 'transparent']}
+            style={styles.wcHeroTopGradient}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 0, y: 1 }}
+          >
+            <View style={styles.wcHeroTopHeader}>
+              <Ionicons name="trophy" size={14} color="#FFD700" style={{ marginRight: 6 }} />
+              <Text style={styles.wcHeroTopTitle}>FIFA WORLD CUP 2026</Text>
+            </View>
+          </LinearGradient>
+        )}
 
-      {/* Top Gradient Banner for World Cup Theme */}
-      {movie.isWorldCup && (
+        {/* Bottom gradient scrim */}
         <LinearGradient
-          colors={['rgba(2, 44, 34, 0.95)', 'rgba(6, 78, 59, 0.8)', 'transparent']}
-          style={styles.wcHeroTopGradient}
+          colors={['transparent', 'rgba(0,0,0,0.15)', 'rgba(0,0,0,0.45)', 'rgba(0,0,0,0.85)', 'rgba(0,0,0,1.0)']}
+          locations={[0, 0.25, 0.5, 0.8, 1]}
           start={{ x: 0, y: 0 }}
           end={{ x: 0, y: 1 }}
-        >
-          <View style={styles.wcHeroTopHeader}>
-            <Ionicons name="trophy" size={14} color="#FFD700" style={{ marginRight: 6 }} />
-            <Text style={styles.wcHeroTopTitle}>FIFA WORLD CUP 2026</Text>
-          </View>
-        </LinearGradient>
-      )}
+          style={styles.gradient}
+        />
 
-      {/* ── Bottom gradient scrim for text readability ── */}
-      <LinearGradient
-        colors={[
-          'transparent',
-          'rgba(0,0,0,0.15)',
-          'rgba(0,0,0,0.45)',
-          'rgba(0,0,0,0.85)',
-          'rgba(0,0,0,1.0)',
-        ]}
-        locations={[0, 0.25, 0.5, 0.8, 1]}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
-        style={styles.gradient}
-      />
-
-      {/* ── Centered Team Logos for Sports ────────────────── */}
-      {/* Sports Logo Overlays (Hide for F1 or World Cup) */}
-      {isSports && !movie.isWorldCup && movie.match?.type !== 'f1' && movie.match?.logo1 && movie.match?.logo2 && (
-        <View style={styles.centeredLogoStage}>
-          <View style={styles.logoRow}>
-            {movie.match.type === 'f1' ? (
-              <View style={[styles.largeTeamCircle, { width: 120, height: 120 }]}>
+        {/* Sports logos (non-WC, non-F1) */}
+        {isSports && !movie.isWorldCup && movie.match?.type !== 'f1' && movie.match?.logo1 && movie.match?.logo2 && (
+          <View style={styles.centeredLogoStage}>
+            <View style={styles.logoRow}>
+              <View style={styles.largeTeamCircle}>
                 <TeamLogo uri={movie.match.logo1} initials={movie.match.initials1} />
               </View>
-            ) : (
-              <>
-                <View style={styles.largeTeamCircle}>
-                  <TeamLogo uri={movie.match.logo1} initials={movie.match.initials1} />
-                </View>
-                <View style={styles.largeVsBadge}>
-                  <Text style={styles.largeVsText}>VS</Text>
-                </View>
-                <View style={styles.largeTeamCircle}>
-                  <TeamLogo uri={movie.match.logo2} initials={movie.match.initials2} />
-                </View>
-              </>
-            )}
-          </View>
-        </View>
-      )}
-
-      {/* Centered Flags/Scores for World Cup */}
-      {isSports && movie.isWorldCup && (
-        <View style={styles.wcHeroCenteredContainer}>
-          {/* Faint Golden Trophy Watermark */}
-          <Ionicons
-            name="trophy"
-            size={180}
-            color="rgba(255, 215, 0, 0.05)"
-            style={styles.wcHeroWatermark}
-          />
-          {movie.match?.stage && (
-            <Text style={styles.wcHeroMatchStageText}>
-              {movie.match.stage.toUpperCase()}
-            </Text>
-          )}
-          <View style={styles.wcHeroLogoRow}>
-            {/* Left Team Column */}
-            <View style={styles.wcHeroTeamColumn}>
-              <View style={[styles.wcHeroFlagCircle, { borderColor: team1Colors.primary }]}>
-                <Text style={styles.wcHeroFlagEmoji}>{movie.match?.flag1 || movie.match?.logo1}</Text>
+              <View style={styles.largeVsBadge}>
+                <Text style={styles.largeVsText}>VS</Text>
               </View>
-              <Text style={[styles.wcHeroTeamName, { color: '#FFD700', position: 'absolute', top: 98 }]} numberOfLines={2}>
-                {movie.match?.team1}
-              </Text>
-            </View>
-            
-            {/* Center Score/VS */}
-            {movie.match?.status === 'LIVE' && movie.match?.score ? (
-              <View style={styles.wcHeroScoreBox}>
-                <Text style={styles.wcHeroScoreText}>{movie.match.score}</Text>
+              <View style={styles.largeTeamCircle}>
+                <TeamLogo uri={movie.match.logo2} initials={movie.match.initials2} />
               </View>
-            ) : (
-              <View style={styles.wcHeroVsBox}>
-                <Text style={styles.wcHeroVsText}>VS</Text>
-              </View>
-            )}
-
-            {/* Right Team Column */}
-            <View style={styles.wcHeroTeamColumn}>
-              <View style={[styles.wcHeroFlagCircle, { borderColor: team2Colors.primary }]}>
-                <Text style={styles.wcHeroFlagEmoji}>{movie.match?.flag2 || movie.match?.logo2}</Text>
-              </View>
-              <Text style={[styles.wcHeroTeamName, { color: '#FFD700', position: 'absolute', top: 98 }]} numberOfLines={2}>
-                {movie.match?.team2}
-              </Text>
             </View>
           </View>
-        </View>
-      )}
+        )}
 
-      {/* ── Bottom-aligned content ─────────────────────── */}
-      <View style={styles.contentOverlay}>
-        {/* Left: tag + title + meta */}
-        <View style={styles.textCol}>
-          {movie.isWorldCup ? (
-            <View style={styles.wcHeroBadgeContainer}>
-              <LinearGradient
-                colors={['#022c22', '#064e3b']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.wcHeroBadgeGradient}
-              >
-                <Text style={styles.wcHeroBadgeText}>FIFA WORLD CUP 2026</Text>
-              </LinearGradient>
-              {!movie.isWorldCupPromo && (
-                movie.match?.status === 'soon' ? (
-                  <View style={[styles.trendingBadge, { marginLeft: 6, marginBottom: 0 }]}>
-                    <LinearGradient
-                      colors={['#f59e0b', '#d97706']}
-                      start={{ x: 0, y: 0 }}
-                      end={{ x: 1, y: 0 }}
-                      style={styles.trendingGradient}
-                    >
-                      <Ionicons name="time" size={10} color="#fff" style={{ marginRight: 4 }} />
-                      <Text style={styles.trendingText}>Starting Soon</Text>
-                    </LinearGradient>
-                  </View>
-                ) : (
-                  <BlinkingLiveBadge style={{ marginLeft: 6, marginBottom: 0 }} />
-                )
+        {/* World Cup centered flags */}
+        {isSports && movie.isWorldCup && (
+          <View style={styles.wcHeroCenteredContainer}>
+            <Ionicons name="trophy" size={180} color="rgba(255, 215, 0, 0.05)" style={styles.wcHeroWatermark} />
+            {movie.match?.stage && (
+              <Text style={styles.wcHeroMatchStageText}>{movie.match.stage.toUpperCase()}</Text>
+            )}
+            <View style={styles.wcHeroLogoRow}>
+              <View style={styles.wcHeroTeamColumn}>
+                <View style={[styles.wcHeroFlagCircle, { borderColor: team1Colors.primary }]}>
+                  <Text style={styles.wcHeroFlagEmoji}>{movie.match?.flag1 || movie.match?.logo1}</Text>
+                </View>
+                <Text style={[styles.wcHeroTeamName, { color: '#FFD700', position: 'absolute', top: 98 }]} numberOfLines={2}>
+                  {movie.match?.team1}
+                </Text>
+              </View>
+              {movie.match?.status === 'LIVE' && movie.match?.score ? (
+                <View style={styles.wcHeroScoreBox}>
+                  <Text style={styles.wcHeroScoreText}>{movie.match.score}</Text>
+                </View>
+              ) : (
+                <View style={styles.wcHeroVsBox}>
+                  <Text style={styles.wcHeroVsText}>VS</Text>
+                </View>
               )}
+              <View style={styles.wcHeroTeamColumn}>
+                <View style={[styles.wcHeroFlagCircle, { borderColor: team2Colors.primary }]}>
+                  <Text style={styles.wcHeroFlagEmoji}>{movie.match?.flag2 || movie.match?.logo2}</Text>
+                </View>
+                <Text style={[styles.wcHeroTeamName, { color: '#FFD700', position: 'absolute', top: 98 }]} numberOfLines={2}>
+                  {movie.match?.team2}
+                </Text>
+              </View>
             </View>
-          ) : isSports ? (
-            movie.match?.status === 'soon' ? (
-              <View style={styles.trendingBadge}>
+          </View>
+        )}
+
+        {/* Bottom content overlay */}
+        <View style={styles.contentOverlay}>
+          <View style={styles.textCol}>
+            {movie.isWorldCup ? (
+              <View style={styles.wcHeroBadgeContainer}>
                 <LinearGradient
-                  colors={['#f59e0b', '#d97706']}
+                  colors={['#022c22', '#064e3b']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
-                  style={styles.trendingGradient}
+                  style={styles.wcHeroBadgeGradient}
                 >
-                  <Ionicons name="time" size={10} color="#fff" style={{ marginRight: 4 }} />
-                  <Text style={styles.trendingText}>Starting Soon</Text>
+                  <Text style={styles.wcHeroBadgeText}>FIFA WORLD CUP 2026</Text>
                 </LinearGradient>
+                {!movie.isWorldCupPromo && (
+                  movie.match?.status === 'soon' ? (
+                    <View style={[styles.trendingBadge, { marginLeft: 6, marginBottom: 0 }]}>
+                      <LinearGradient colors={['#f59e0b', '#d97706']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.trendingGradient}>
+                        <Ionicons name="time" size={10} color="#fff" style={{ marginRight: 4 }} />
+                        <Text style={styles.trendingText}>Starting Soon</Text>
+                      </LinearGradient>
+                    </View>
+                  ) : (
+                    <BlinkingLiveBadge style={{ marginLeft: 6, marginBottom: 0 }} />
+                  )
+                )}
               </View>
+            ) : isSports ? (
+              movie.match?.status === 'soon' ? (
+                <View style={styles.trendingBadge}>
+                  <LinearGradient colors={['#f59e0b', '#d97706']} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={styles.trendingGradient}>
+                    <Ionicons name="time" size={10} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={styles.trendingText}>Starting Soon</Text>
+                  </LinearGradient>
+                </View>
+              ) : (
+                <BlinkingLiveBadge />
+              )
             ) : (
-              <BlinkingLiveBadge />
-            )
-          ) : (
-            <View style={styles.trendingBadge}>
-              <LinearGradient
-                colors={[Colors.accentPurple, Colors.accentPink]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.trendingGradient}
+              <View style={styles.trendingBadge}>
+                {inCinemas ? (
+                  <LinearGradient
+                    colors={['rgba(20,20,24,0.85)', 'rgba(20,20,24,0.85)']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.trendingGradient}
+                  >
+                    <Ionicons name="film" size={10} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={styles.trendingText}>IN CINEMAS</Text>
+                  </LinearGradient>
+                ) : (
+                  <LinearGradient
+                    colors={[Colors.accentPurple, Colors.accentPink]}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.trendingGradient}
+                  >
+                    <Ionicons name="flame" size={10} color="#fff" style={{ marginRight: 4 }} />
+                    <Text style={styles.trendingText}>Trending Now</Text>
+                  </LinearGradient>
+                )}
+              </View>
+            )}
+
+            <Text
+              style={[styles.title, isSports && { fontSize: 24, lineHeight: 30 }, movie.isWorldCup && { color: '#FFD700' }]}
+              numberOfLines={isSports ? 3 : 2}
+            >
+              {title}
+            </Text>
+
+            {metaParts.length > 0 && (
+              <Text style={styles.meta}>{metaParts.join('  ·  ')}</Text>
+            )}
+          </View>
+
+          <View style={styles.actionCol}>
+            {!isSports && (
+              <TouchableOpacity
+                style={[styles.addBtn, isSaved && styles.addBtnActive]}
+                onPress={() => onAddToList(movie)}
+                activeOpacity={0.7}
               >
-                <Ionicons name="flame" size={10} color="#fff" style={{ marginRight: 4 }} />
-                <Text style={styles.trendingText}>Trending Now</Text>
-              </LinearGradient>
-            </View>
-          )}
-
-          <Text
-            style={[
-              styles.title, 
-              isSports && { fontSize: 24, lineHeight: 30 },
-              movie.isWorldCup && { color: '#FFD700' }
-            ]}
-            numberOfLines={isSports ? 3 : 2}
-          >
-            {title}
-          </Text>
-
-          {metaParts.length > 0 && (
-            <Text style={styles.meta}>{metaParts.join('  ·  ')}</Text>
-          )}
-        </View>
-
-        {/* Right: floating circular action buttons */}
-        <View style={styles.actionCol}>
-          {!isSports && (
-            <TouchableOpacity
-              style={[styles.addBtn, isSaved && styles.addBtnActive]}
-              onPress={() => onAddToList(movie)}
-              activeOpacity={0.7}>
-              <Ionicons
-                name={isSaved ? "checkmark" : "add"}
-                size={24}
-                color="#fff"
-              />
+                <Ionicons name={isSaved ? "checkmark" : "add"} size={24} color="#fff" />
+              </TouchableOpacity>
+            )}
+            <TouchableOpacity style={styles.playBtn} onPress={() => onPlay(movie)} activeOpacity={0.7}>
+              <View style={styles.playTriangle} />
             </TouchableOpacity>
-          )}
-          <TouchableOpacity
-            style={styles.playBtn}
-            onPress={() => onPlay(movie)}
-            activeOpacity={0.7}>
-            <View style={styles.playTriangle} />
-          </TouchableOpacity>
+          </View>
         </View>
-      </View>
-    </InnerWrapper>
+      </InnerWrapper>
     </CardWrapper>
   );
 });
 
 // ═══════════════════════════════════════════════════════════
-// StackedCard — RIGHT-side-peeking animated card in the stack
+// AnimatedDot — Individual pagination dot with smooth morphing
 // ═══════════════════════════════════════════════════════════
-const StackedCard = memo(({ movie, index, total, animIndex, onPlay, onAddToList, screenWidth, isSaved }) => {
+const AnimatedDot = memo(({ index, scrollX, totalCards, screenWidth }) => {
+  const CARD_WIDTH = screenWidth - 64;
+  
   const animStyle = useAnimatedStyle(() => {
-    // ── Circular Distance Calculation ──
-    // This ensures that even if animIndex is 10 and we have 5 movies,
-    // the distance for movie 0 is handled correctly as if it's right after 4.
-    let dist = index - (animIndex.value % total);
-    if (dist > total / 2) dist -= total;
-    if (dist < -total / 2) dist += total;
-
-    // Cards too far in the past/future relative to active
-    if (dist < -1.1 || dist > 2.5) {
-      return { opacity: 0, zIndex: -1, transform: [{ translateX: dist < 0 ? -screenWidth : 0 }] };
-    }
-
-    const d = Math.max(-1, Math.min(dist, 2));
-
-    // ── Horizontal Movement (Exit) ──
-    const translateX = interpolate(
-      d, [-1, 0, 1, 2],
-      [-screenWidth, 0, 0, 0],
+    const inputRange = [
+      (index - 1) * CARD_WIDTH,
+      index * CARD_WIDTH,
+      (index + 1) * CARD_WIDTH,
+    ];
+    
+    const width = interpolate(
+      scrollX.value % (totalCards * CARD_WIDTH),
+      inputRange,
+      [6, 18, 6],
+      Extrapolation.CLAMP
+    );
+    
+    const opacity = interpolate(
+      scrollX.value % (totalCards * CARD_WIDTH),
+      inputRange,
+      [0.15, 1, 0.15],
       Extrapolation.CLAMP
     );
 
-    // ── RIGHT-PEEK: behind cards wider ──
-    const cardWidth = interpolate(
-      d, [0, 1, 2],
-      [screenWidth - 64, screenWidth - 52, screenWidth - 42],
-      Extrapolation.CLAMP,
-    );
-
-    // Keep fully opaque so it doesn't fade on swipe!
-    const opacity = interpolate(d, [-1, -0.9, 0, 1, 2], [0, 1, 1, 1, 1], Extrapolation.CLAMP);
-    const zIdx = interpolate(d, [-1, 0, 1, 2], [4, 3, 2, 1], Extrapolation.CLAMP);
-
     return {
-      width: cardWidth,
+      width,
       opacity,
-      zIndex: Math.round(zIdx),
-      transform: [
-        { translateX },
-        { scale: 1 }
-      ],
+      backgroundColor: Colors.accentPurple,
     };
   });
 
-  return (
-    <Animated.View style={[styles.stackCard, animStyle]}>
-      <HeroCard movie={movie} onPlay={onPlay} onAddToList={onAddToList} isSaved={isSaved} />
-    </Animated.View>
-  );
+  return <Animated.View style={[styles.dot, animStyle]} />;
 });
 
 // ═══════════════════════════════════════════════════════════
-// HeroSpotlight — The stacked carousel container
+// HeroSpotlight — The main carousel container (v2 engine)
 // ═══════════════════════════════════════════════════════════
 const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watchlist = [] }) => {
   const { width: SCREEN_WIDTH } = useWindowDimensions();
+  const CARD_WIDTH = SCREEN_WIDTH - 32;
+  const CARD_SPACING = 0;
 
   const [activeIndex, setActiveIndex] = useState(0);
   const activeRef = useRef(0);
-  const moviesRef = useRef(movies);
-  const animIndex = useSharedValue(0);
   const timerRef = useRef(null);
-
-  useEffect(() => {
-    moviesRef.current = movies;
-  }, [movies]);
-
-  const goTo = useCallback((idx, velocity = 0) => {
-    // Infinite indexing: we don't clamp, we just go to the target
-    activeRef.current = idx;
-
-    // Calculate UI index for dots
-    const len = moviesRef.current.length;
-    if (len > 0) {
-      const uiIdx = ((idx % len) + len) % len;
-      setActiveIndex(uiIdx);
-    }
-
-    // Use withSpring for a buttery smooth, physics-based snap
-    animIndex.value = withSpring(idx, {
-      damping: 20,
-      stiffness: 160,
-      mass: 0.7,
-      overshootClamping: true, // Prevents wobbly bouncing
-      restDisplacementThreshold: 0.01,
-      restSpeedThreshold: 0.01,
-    });
-  }, [animIndex]);
+  
+  // Shared values for Reanimated (UI thread)
+  const translateX = useSharedValue(0);
+  const scrollX = useSharedValue(0); // For dot pagination
+  const activeIdx = useSharedValue(0); // Safely track active index in worklet
+  const isDragging = useSharedValue(false);
 
   // ── Auto-play ────────────────────────────────────────
-  const startAuto = useCallback(() => {
+  const startAutoPlay = useCallback(() => {
     clearInterval(timerRef.current);
     if (movies.length <= 1 || paused) return;
     timerRef.current = setInterval(() => {
-      goTo(activeRef.current + 1);
+      if (isDragging.value) return; // Prevent fighting gesture
+      const next = (activeRef.current + 1) % movies.length;
+      activeRef.current = next;
+      activeIdx.value = next;
+      setActiveIndex(next);
+      const target = -next * CARD_WIDTH;
+      translateX.value = withSpring(target, {
+        damping: 22,
+        stiffness: 150,
+        mass: 0.8,
+        overshootClamping: true,
+        restDisplacementThreshold: 0.01,
+        restSpeedThreshold: 0.01,
+      });
+      scrollX.value = withTiming(next * CARD_WIDTH, { duration: 400 });
+      prefetchHeroImages(movies, next);
     }, AUTO_PLAY_MS);
-  }, [movies.length, goTo, paused]);
+  }, [movies.length, paused, CARD_WIDTH]);
 
   useEffect(() => {
-    startAuto();
+    startAutoPlay();
     return () => clearInterval(timerRef.current);
-  }, [startAuto]);
+  }, [startAutoPlay]);
 
-  // ── Reset when movies list changes (filtering) ────────
+  // Reset when movies change
   useEffect(() => {
     activeRef.current = 0;
+    activeIdx.value = 0;
     setActiveIndex(0);
-    animIndex.value = 0;
-    startAuto();
+    translateX.value = 0;
+    scrollX.value = 0;
+    startAutoPlay();
   }, [movies.length]);
 
-  // ── Swipe gesture ────────────────────────────────────
-  const panResponder = useRef(
-    PanResponder.create({
-      onStartShouldSetPanResponder: () => false,
-      onMoveShouldSetPanResponder: (_, g) => {
-        // Only claim the gesture if the user is clearly swiping left/right
-        return Math.abs(g.dx) > 10 && Math.abs(g.dx) > Math.abs(g.dy) * 1.5;
-      },
-      // IMPORTANT: Once we claim the horizontal swipe, DO NOT let the vertical ScrollView steal it!
-      // This prevents the "stuck mid-air" freeze bug on Android.
-      onPanResponderTerminationRequest: () => false,
-      onPanResponderGrant: () => {
-        clearInterval(timerRef.current);
-      },
-      onPanResponderMove: (_, g) => {
-        const delta = (g.dx / SCREEN_WIDTH);
-        animIndex.value = activeRef.current - delta;
-      },
-      onPanResponderRelease: (_, g) => {
-        const velocity = g.vx || 0;
-        const dragThreshold = SCREEN_WIDTH * 0.2;
+  const syncJS = useCallback((idx) => {
+    setActiveIndex(idx);
+    activeRef.current = idx;
+    startAutoPlay();
+    prefetchHeroImages(movies, idx);
+  }, [movies, startAutoPlay]);
 
-        let targetIdx = activeRef.current;
-
-        if (g.dx < -dragThreshold || velocity < -0.3) {
-          targetIdx = activeRef.current + 1;
-        } else if (g.dx > dragThreshold || velocity > 0.3) {
-          targetIdx = activeRef.current - 1;
+  // ── Gesture handler (UI thread) ─────────────────────
+  const gesture = useMemo(() => {
+    return Gesture.Pan()
+      .activeOffsetX([-20, 20])
+      .failOffsetY([-10, 10])
+      .onStart(() => {
+        'worklet';
+        isDragging.value = true;
+      })
+      .onUpdate((event) => {
+        'worklet';
+        const base = -activeIdx.value * CARD_WIDTH;
+        translateX.value = base + event.translationX;
+      })
+      .onEnd((event) => {
+        'worklet';
+        isDragging.value = false;
+        const velocity = event.velocityX;
+        const dragThreshold = CARD_WIDTH * 0.15;
+        
+        let nextIndex = activeIdx.value;
+        
+        if (event.translationX < -dragThreshold || velocity < -500) {
+          nextIndex = (activeIdx.value + 1) % movies.length;
+        } else if (event.translationX > dragThreshold || velocity > 500) {
+          nextIndex = (activeIdx.value - 1 + movies.length) % movies.length;
         }
 
-        // Circular behavior: no clamping needed here, 
-        // goTo handles infinite indexing
-        goTo(targetIdx, velocity);
-        startAuto();
-      },
-      onPanResponderTerminate: (_, g) => {
-        // If gesture is cancelled mid-swipe (e.g. parent ScrollView takes over),
-        // we must force snap it to the nearest index so it doesn't freeze in between cards!
-        let targetIdx = activeRef.current;
-        if (g.dx && g.dx < - (SCREEN_WIDTH * 0.2)) {
-          targetIdx = activeRef.current + 1;
-        } else if (g.dx && g.dx > (SCREEN_WIDTH * 0.2)) {
-          targetIdx = activeRef.current - 1;
-        }
-        goTo(targetIdx, g.vx || 0);
-        startAuto();
-      },
-    }),
-  ).current;
+        const target = -nextIndex * CARD_WIDTH;
+        
+        // Physics-based spring with velocity passthrough
+        translateX.value = withSpring(target, {
+          velocity: velocity,
+          damping: 22,
+          stiffness: 150,
+          mass: 0.8,
+          overshootClamping: true,
+          restDisplacementThreshold: 0.01,
+          restSpeedThreshold: 0.01,
+        });
+
+        scrollX.value = withTiming(nextIndex * CARD_WIDTH, { duration: 300 });
+        
+        activeIdx.value = nextIndex;
+        
+        // Sync active index back to JS thread safely
+        runOnJS(syncJS)(nextIndex);
+      });
+  }, [movies.length, CARD_WIDTH, syncJS]);
+
+  // ── Card animated styles ────────────────────────────
+  const containerAnimStyle = useAnimatedStyle(() => ({
+    transform: [{ translateX: translateX.value }],
+  }));
 
   if (movies.length === 0) return null;
 
   return (
-    <View style={styles.wrapper} {...panResponder.panHandlers}>
-      {/* Stack container — full width, cards centered inside */}
-      <View style={[styles.stackContainer, { height: CARD_HEIGHT + 14 }]}>
-        {movies.map((movie, idx) => (
-          <StackedCard
-            key={`${movie.id}-${idx}`}
-            movie={movie}
-            index={idx}
-            total={movies.length}
-            animIndex={animIndex}
-            onPlay={onPlay}
-            onAddToList={onAddToList}
-            screenWidth={SCREEN_WIDTH}
-            isSaved={watchlist.some(m => m.id === movie.id)}
-          />
-        ))}
-      </View>
+    <View style={styles.wrapper}>
+      <GestureDetector gesture={gesture}>
+        <Animated.View style={[styles.carouselTrack, containerAnimStyle]}>
+          {movies.map((movie, idx) => {
+            const isActive = idx === activeIndex;
+            return (
+              <CardWrapper
+                key={`${movie.id}-${idx}`}
+                index={idx}
+                activeIndex={activeIndex}
+                translateX={translateX}
+                cardWidth={CARD_WIDTH}
+                screenWidth={SCREEN_WIDTH}
+                totalCards={movies.length}
+              >
+                <HeroCard
+                  movie={movie}
+                  onPlay={onPlay}
+                  onAddToList={onAddToList}
+                  isSaved={watchlist.some(m => m.id === movie.id)}
+                  cardWidth={CARD_WIDTH}
+                />
+              </CardWrapper>
+            );
+          })}
+        </Animated.View>
+      </GestureDetector>
 
-      {/* Pagination dots */}
+      {/* Animated dot pagination */}
       <View style={styles.dots}>
         {movies.map((_, i) => (
-          <View key={i} style={[styles.dot, i === activeIndex && styles.dotActive]} />
+          <AnimatedDot
+            key={i}
+            index={i}
+            scrollX={scrollX}
+            totalCards={movies.length}
+            screenWidth={SCREEN_WIDTH}
+          />
         ))}
       </View>
     </View>
@@ -652,30 +574,67 @@ const HeroSpotlight = ({ movies = [], onPlay, onAddToList, paused = false, watch
 };
 
 // ═══════════════════════════════════════════════════════════
+// CardWrapper — Applies scale + shadow for side-peek effect
+// Uses ONLY transforms (translateX, scale) — NO width/layout changes
+// ═══════════════════════════════════════════════════════════
+const CardWrapper = memo(({ children, index, activeIndex, translateX, cardWidth, screenWidth, totalCards }) => {
+  const animStyle = useAnimatedStyle(() => {
+    const scrollPosition = -translateX.value;
+    const cardOffset = index * cardWidth;
+    const diff = scrollPosition - cardOffset;
+    
+    // Normalize to -1...1 range (0 = active, ±1 = adjacent)
+    const normalized = diff / cardWidth;
+    
+    // Scale: active = 1.0, adjacent = 0.92
+    const scale = interpolate(
+      Math.abs(normalized),
+      [0, 1, 2],
+      [1, 0.92, 0.85],
+      Extrapolation.CLAMP
+    );
+
+    // Opacity: active = 1, far cards fade
+    const opacity = interpolate(
+      Math.abs(normalized),
+      [0, 1, 2],
+      [1, 0.85, 0.5],
+      Extrapolation.CLAMP
+    );
+
+    return {
+      transform: [{ scale }],
+      opacity,
+    };
+  });
+
+  return (
+    <Animated.View style={[styles.cardSlot, { width: cardWidth, height: CARD_HEIGHT }, animStyle]}>
+      {children}
+    </Animated.View>
+  );
+});
+
+// ═══════════════════════════════════════════════════════════
 // STYLES
 // ═══════════════════════════════════════════════════════════
 const styles = StyleSheet.create({
-  // ── Container ───────────────────────────────────────
   wrapper: {
     marginBottom: Spacing.lg,
   },
-  stackContainer: {
-    // Full width — cards anchored to left, peek extends right
-    alignItems: 'flex-start',
-    justifyContent: 'flex-start',
+  
+  // ── Carousel track (horizontal strip of cards) ──────
+  carouselTrack: {
+    flexDirection: 'row',
+    paddingLeft: 16,
+    paddingRight: 16,
   },
-
-  // ── Stacked card (absolute, z-axis) ─────────────────
-  stackCard: {
-    position: 'absolute',
-    top: 0,
-    left: 32,
-    height: CARD_HEIGHT,
-    // Soft shadow for depth
+  
+  // ── Card slot (fixed width, transform-animated) ─────
+  cardSlot: {
+    marginRight: 0,
     ...Platform.select({
-      android: {
-        elevation: 12,
-      },
+      android: { elevation: 12 },
       ios: {
         shadowColor: '#000',
         shadowOffset: { width: 0, height: 8 },
@@ -693,45 +652,26 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
 
-  // ── Poster image ────────────────────────────────────
-  poster: {
+  posterDimmer: {
     position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
+    top: 0, left: 0, right: 0, bottom: 0,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    zIndex: 1,
+  },
+  wcPosterDimmer: {
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
   },
 
-  // ── Placeholder shown while real backdrop loads ──────
-  heroPlaceholder: {
-    zIndex: 0,
-    opacity: 1,
-  },
-  heroBackdropVisible: {
-    zIndex: 1,
-    opacity: 1,
-  },
-  heroBackdropHidden: {
-    zIndex: 1,
-    opacity: 0,
-  },
-
-  // ── Bottom gradient — rich cinematic scrim ──────────
   gradient: {
     position: 'absolute',
-    left: -1,
-    right: -1,
-    bottom: -1,
+    left: -1, right: -1, bottom: -1,
     height: '55%',
     zIndex: 2,
   },
 
-  // ── Content: pinned to bottom ───────────────────────
   contentOverlay: {
     position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
+    left: 0, right: 0, bottom: 0,
     flexDirection: 'row',
     alignItems: 'flex-end',
     paddingHorizontal: 20,
@@ -739,405 +679,103 @@ const styles = StyleSheet.create({
     zIndex: 12,
   },
 
-  // ── Text column (bottom-left) ───────────────────────
-  textCol: {
-    flex: 1,
-    marginRight: 14,
-  },
+  textCol: { flex: 1, marginRight: 14 },
+  actionCol: { alignItems: 'center', justifyContent: 'flex-end', gap: 12, paddingBottom: 2 },
 
-  // ── Action buttons (bottom-right) ───────────────────
-  actionCol: {
-    alignItems: 'center',
-    justifyContent: 'flex-end',
-    gap: 12,
-    paddingBottom: 2,
-  },
-
-  // ── Tags ────────────────────────────────────────────
   trendingBadge: {
-    alignSelf: 'flex-start',
-    marginBottom: 8,
-    borderRadius: 6,
-    overflow: 'hidden',
-    elevation: 4,
-    shadowColor: Colors.accentPink,
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.3,
-    shadowRadius: 4,
+    alignSelf: 'flex-start', marginBottom: 8, borderRadius: 6, overflow: 'hidden',
+    elevation: 4, shadowColor: Colors.accentPink, shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 4,
   },
-  trendingGradient: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
+  trendingGradient: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, paddingVertical: 3 },
   trendingText: {
-    color: '#fff',
-    fontSize: 9.5,
-    fontWeight: '900',
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    textShadowColor: 'rgba(0,0,0,0.2)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    color: '#fff', fontSize: 9.5, fontWeight: '900', textTransform: 'uppercase', letterSpacing: 0.8,
+    textShadowColor: 'rgba(0,0,0,0.2)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
   liveBadgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: Colors.liveBadge,
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    alignSelf: 'flex-start',
-    marginBottom: 8,
-    gap: 6,
-    elevation: 4,
+    flexDirection: 'row', alignItems: 'center', backgroundColor: Colors.liveBadge,
+    paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, alignSelf: 'flex-start', marginBottom: 8, gap: 6, elevation: 4,
   },
-  liveBadgeDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: '#fff',
-  },
-  liveBadgeText: {
-    color: '#fff',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
+  liveBadgeDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#fff' },
+  liveBadgeText: { color: '#fff', fontSize: 12, fontWeight: '900', letterSpacing: 1 },
 
-  // ── Title (large, bold, clearly visible) ────────────
   title: {
-    color: '#fff',
-    fontSize: 28,
-    fontWeight: '900',
-    lineHeight: 34,
-    marginBottom: 8,
-    textShadowColor: 'rgba(0,0,0,0.7)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 6,
+    color: '#fff', fontSize: 28, fontWeight: '900', lineHeight: 34, marginBottom: 8,
+    textShadowColor: 'rgba(0,0,0,0.7)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 6,
   },
-
-  // ── Centered Large Team Logos ──────────────────────
-  centeredLogoStage: {
-    position: 'absolute',
-    top: '32%',
-    left: 0,
-    right: 0,
-    height: 140,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  logoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 20,
-  },
-  largeTeamCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: '#FFFFFF', // Solid white background for max visibility
-    borderWidth: 3,
-    borderColor: '#FFFFFF',
-    justifyContent: 'center',
-    alignItems: 'center',
-    // Strong shadow for depth
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.5,
-    shadowRadius: 10,
-    elevation: 12,
-  },
-  largeTeamLogo: {
-    width: 75,
-    height: 75,
-    // Small shadow to ensure colorful logos pop on white
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.15,
-    shadowRadius: 4,
-  },
-  largeVsBadge: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: '#000',
-    borderWidth: 2.5,
-    borderColor: 'rgba(255,255,255,0.4)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 15,
-  },
-  largeVsText: {
-    color: '#fff',
-    fontSize: 14,
-    fontWeight: '900',
-    letterSpacing: 1,
-  },
-  teamInitials: {
-    color: '#1A1A2E',
-    fontSize: 24,
-    fontWeight: 'bold',
-  },
-
-  // ── Meta (bigger, clearer) ──────────────────────────
   meta: {
-    color: 'rgba(255,255,255,0.7)',
-    fontSize: 14,
-    fontWeight: '600',
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+    color: 'rgba(255,255,255,0.7)', fontSize: 14, fontWeight: '600',
+    textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3,
   },
 
-  // ── Add button (circular, floating) ─────────────────
   addBtn: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    borderWidth: 1.5,
-    borderColor: 'rgba(255,255,255,0.45)',
-    justifyContent: 'center',
-    alignItems: 'center',
+    width: 44, height: 44, borderRadius: 22, borderWidth: 1.5,
+    borderColor: 'rgba(255,255,255,0.45)', justifyContent: 'center', alignItems: 'center',
     backgroundColor: 'rgba(255,255,255,0.05)',
   },
-  addBtnActive: {
-    backgroundColor: Colors.accentPurple,
-    borderColor: Colors.accentPurple,
-  },
-  addIcon: {
-    color: '#fff',
-    fontSize: 24,
-    fontWeight: '300',
-    includeFontPadding: false,
-    textAlignVertical: 'center',
-  },
-
-  // ── Play button (circular, floating) ────────────────
-  playBtn: {
-    width: 54,
-    height: 54,
-    borderRadius: 27,
-    backgroundColor: '#fff',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
+  addBtnActive: { backgroundColor: Colors.accentPurple, borderColor: Colors.accentPurple },
+  playBtn: { width: 54, height: 54, borderRadius: 27, backgroundColor: '#fff', justifyContent: 'center', alignItems: 'center' },
   playTriangle: {
-    width: 0,
-    height: 0,
-    marginLeft: 4,
-    borderLeftWidth: 16,
-    borderTopWidth: 10,
-    borderBottomWidth: 10,
-    borderLeftColor: Colors.bgPrimary,
-    borderTopColor: 'transparent',
-    borderBottomColor: 'transparent',
+    width: 0, height: 0, marginLeft: 4,
+    borderLeftWidth: 16, borderTopWidth: 10, borderBottomWidth: 10,
+    borderLeftColor: Colors.bgPrimary, borderTopColor: 'transparent', borderBottomColor: 'transparent',
   },
 
-  // ── Pagination ──────────────────────────────────────
-  dots: {
-    flexDirection: 'row',
-    justifyContent: 'center',
-    gap: 6,
-    marginTop: 14,
+  dots: { flexDirection: 'row', justifyContent: 'center', gap: 6, marginTop: 14 },
+  dot: { height: 6, borderRadius: 3 },
+
+  // ── Sports & World Cup styles (preserved from v1) ──
+  centeredLogoStage: {
+    position: 'absolute', top: '32%', left: 0, right: 0, height: 140,
+    alignItems: 'center', justifyContent: 'center', zIndex: 10,
   },
-  dot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
-    backgroundColor: 'rgba(255,255,255,0.15)',
+  logoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 20 },
+  largeTeamCircle: {
+    width: 100, height: 100, borderRadius: 50, backgroundColor: '#FFFFFF',
+    borderWidth: 3, borderColor: '#FFFFFF', justifyContent: 'center', alignItems: 'center',
+    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.5, shadowRadius: 10, elevation: 12,
   },
-  dotActive: {
-    width: 18,
-    borderRadius: 3,
-    backgroundColor: Colors.accentPurple,
+  largeTeamLogo: { width: 75, height: 75, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.15, shadowRadius: 4 },
+  largeVsBadge: {
+    width: 44, height: 44, borderRadius: 22, backgroundColor: '#000',
+    borderWidth: 2.5, borderColor: 'rgba(255,255,255,0.4)', justifyContent: 'center', alignItems: 'center', elevation: 15,
   },
-  wcHeroTopGradient: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    height: 90,
-    paddingTop: 16,
-    paddingHorizontal: 20,
-    zIndex: 11,
-  },
-  wcHeroTopHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  wcHeroTopTitle: {
-    color: '#FFD700',
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1,
-    textShadowColor: 'rgba(0,0,0,0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
-  },
-  wcHeroCenteredContainer: {
-    position: 'absolute',
-    top: '30%',
-    left: 0,
-    right: 0,
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 10,
-  },
-  wcHeroLogoRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: 16,
-    zIndex: 2,
-    marginBottom: 48, // Space to accommodate up to 2 wrapped lines of team names
-  },
+  largeVsText: { color: '#fff', fontSize: 14, fontWeight: '900', letterSpacing: 1 },
+  teamInitials: { color: '#1A1A2E', fontSize: 24, fontWeight: 'bold' },
+
+  wcHeroTopGradient: { position: 'absolute', top: 0, left: 0, right: 0, height: 90, paddingTop: 16, paddingHorizontal: 20, zIndex: 11 },
+  wcHeroTopHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center' },
+  wcHeroTopTitle: { color: '#FFD700', fontSize: 12, fontWeight: '900', letterSpacing: 1, textShadowColor: 'rgba(0,0,0,0.5)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 3 },
+  wcHeroCenteredContainer: { position: 'absolute', top: '30%', left: 0, right: 0, alignItems: 'center', justifyContent: 'center', zIndex: 10 },
+  wcHeroLogoRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 16, zIndex: 2, marginBottom: 48 },
   wcHeroFlagCircle: {
-    width: 90,
-    height: 90,
-    borderRadius: 45,
-    backgroundColor: '#FFFFFF', // Solid white backdrop so flags stand out clearly
-    borderWidth: 3,
-    borderColor: '#FFD700',
-    justifyContent: 'center',
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.6,
-    shadowRadius: 10,
-    elevation: 12,
-    overflow: 'hidden',
+    width: 90, height: 90, borderRadius: 45, backgroundColor: '#FFFFFF', borderWidth: 3, borderColor: '#FFD700',
+    justifyContent: 'center', alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 6 }, shadowOpacity: 0.6, shadowRadius: 10, elevation: 12, overflow: 'hidden',
   },
-  wcHeroFlagEmoji: {
-    fontSize: 56,
-    width: 90,
-    height: 90,
-    lineHeight: 90,
-    textAlign: 'center',
-    textAlignVertical: 'center',
-    includeFontPadding: false,
-  },
+  wcHeroFlagEmoji: { fontSize: 56, width: 90, height: 90, lineHeight: 90, textAlign: 'center', textAlignVertical: 'center', includeFontPadding: false },
   wcHeroVsBox: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    backgroundColor: '#1E1E1E', // Slick dark scorecard design
-    borderWidth: 2,
-    borderColor: '#FFD700',
-    justifyContent: 'center',
-    alignItems: 'center',
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
+    width: 50, height: 50, borderRadius: 25, backgroundColor: '#1E1E1E', borderWidth: 2, borderColor: '#FFD700',
+    justifyContent: 'center', alignItems: 'center', elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 5,
   },
-  wcHeroVsText: {
-    color: '#FFD700',
-    fontSize: 16,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
+  wcHeroVsText: { color: '#FFD700', fontSize: 16, fontWeight: '900', letterSpacing: 0.5 },
   wcHeroScoreBox: {
-    backgroundColor: '#1E1E1E', // Slick dark scorecard design
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 12,
-    borderWidth: 2,
-    borderColor: '#FFD700',
-    elevation: 10,
-    minWidth: 70,
-    alignItems: 'center',
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.4,
-    shadowRadius: 5,
+    backgroundColor: '#1E1E1E', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 12, borderWidth: 2, borderColor: '#FFD700',
+    elevation: 10, minWidth: 70, alignItems: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 5,
   },
-  wcHeroScoreText: {
-    color: '#fff',
-    fontSize: 20,
-    fontWeight: '900',
-    letterSpacing: 1.5,
-  },
-  wcHeroTeamColumn: {
-    alignItems: 'center',
-    width: 110, // Increased width for wrapping team name text
-  },
+  wcHeroScoreText: { color: '#fff', fontSize: 20, fontWeight: '900', letterSpacing: 1.5 },
+  wcHeroTeamColumn: { alignItems: 'center', width: 110 },
   wcHeroTeamName: {
-    color: '#fff',
-    fontSize: 15, // Highly readable size for long country name wrapping
-    fontWeight: '900',
-    textAlign: 'center',
-    textShadowColor: 'rgba(0,0,0,0.8)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
-    marginTop: 8,
-    width: 110, // Increased width
+    color: '#fff', fontSize: 15, fontWeight: '900', textAlign: 'center',
+    textShadowColor: 'rgba(0,0,0,0.8)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4, marginTop: 8, width: 110,
   },
-  wcHeroBadgeContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 8,
-    gap: 8,
-  },
-  wcHeroBadgeGradient: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: 'rgba(255, 215, 0, 0.3)',
-  },
-  wcHeroBadgeText: {
-    color: '#FFD700',
-    fontSize: 10,
-    fontWeight: '900',
-    letterSpacing: 0.5,
-  },
-  wcHeroCardBorder: {
-    borderWidth: 2,
-    borderColor: '#FFD700',
-    backgroundColor: '#022c22',
-  },
-  wcHeroWatermark: {
-    position: 'absolute',
-    alignSelf: 'center',
-    top: -45,
-    zIndex: 1,
-  },
-  posterDimmer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0,0,0,0.15)',
-    zIndex: 1,
-  },
-  wcPosterDimmer: {
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-  },
-  wcHeroCardInner: {
-    flex: 1,
-    borderRadius: 18.5,
-    backgroundColor: '#022c22',
-    overflow: 'hidden',
-    position: 'relative',
-  },
+  wcHeroBadgeContainer: { flexDirection: 'row', alignItems: 'center', marginBottom: 8, gap: 8 },
+  wcHeroBadgeGradient: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6, borderWidth: 1, borderColor: 'rgba(255, 215, 0, 0.3)' },
+  wcHeroBadgeText: { color: '#FFD700', fontSize: 10, fontWeight: '900', letterSpacing: 0.5 },
+  wcHeroCardInner: { flex: 1, borderRadius: 18.5, backgroundColor: '#022c22', overflow: 'hidden', position: 'relative' },
   wcHeroMatchStageText: {
-    color: '#FFD700',
-    fontSize: 15, // Bigger match group/stage title
-    fontWeight: '900',
-    letterSpacing: 2, // Bold letter spacing
-    textAlign: 'center',
-    marginBottom: 16,
-    textShadowColor: 'rgba(0,0,0,0.9)',
-    textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 4,
+    color: '#FFD700', fontSize: 15, fontWeight: '900', letterSpacing: 2, textAlign: 'center', marginBottom: 16,
+    textShadowColor: 'rgba(0,0,0,0.9)', textShadowOffset: { width: 0, height: 2 }, textShadowRadius: 4,
   },
+  wcHeroWatermark: { position: 'absolute', alignSelf: 'center', top: -45, zIndex: 1 },
 });
 
 export default HeroSpotlight;

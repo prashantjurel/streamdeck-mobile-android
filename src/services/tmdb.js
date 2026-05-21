@@ -235,6 +235,31 @@ export async function searchTMDB(query) {
 
 
 /**
+ * Fetch detailed information for a movie or TV show, including cast and videos.
+ */
+export async function fetchMediaDetails(id, type = 'movie') {
+  const apiKey = await getApiKey();
+  if (!apiKey || !id) return null;
+
+  try {
+    const endpoint = type === 'tv' ? 'tv' : 'movie';
+    const res = await fetch(
+      `${TMDB_BASE}/${endpoint}/${id}?api_key=${apiKey}&append_to_response=credits,videos,content_ratings,release_dates`
+    );
+    
+    if (res.status === 401) throw new Error('INVALID_API_KEY');
+    
+    const data = await res.json();
+    return { ...data, media_type: type };
+  } catch (e) {
+    if (e.message === 'INVALID_API_KEY') throw e;
+    console.error(`[TMDB] fetchMediaDetails failed for ${type} ${id}:`, e);
+    return null;
+  }
+}
+
+
+/**
  * Fetch Now Playing movies (for Explore screen).
  */
 export async function fetchNowPlaying() {
@@ -251,13 +276,31 @@ export async function fetchNowPlaying() {
     return (data.results || []).map(m => ({ ...m, media_type: 'movie' }));
   } catch (e) {
     if (e.message === 'INVALID_API_KEY') throw e;
-    console.error('[TMDB] Now Playing failed:', e);
+    console.error('[TMDB] fetchNowPlaying failed:', e);
     return [];
   }
 }
 
+let cachedNowPlayingIds = null;
+let lastNowPlayingFetch = 0;
+
 /**
- * Fetch TV Shows currently airing (On The Air).
+ * Get a Set of IDs for movies currently in theaters (cached in memory for 1 hour).
+ */
+export async function getNowPlayingIds() {
+  const ONE_HOUR = 60 * 60 * 1000;
+  if (cachedNowPlayingIds && (Date.now() - lastNowPlayingFetch < ONE_HOUR)) {
+    return cachedNowPlayingIds;
+  }
+  
+  const movies = await fetchNowPlaying();
+  cachedNowPlayingIds = new Set(movies.map(m => m.id));
+  lastNowPlayingFetch = Date.now();
+  return cachedNowPlayingIds;
+}
+
+/**
+ * Fetch Now Playing TV (Airing Today)(On The Air).
  */
 export async function fetchNowPlayingTV() {
   const apiKey = await getApiKey();
@@ -386,6 +429,76 @@ export function getImageUrl(path, size = 'w500') {
   if (typeof path === 'number' || typeof path === 'object') return path; // Local require() support
   if (path.startsWith('http')) return path;
   return `https://image.tmdb.org/t/p/${size}${path}`;
+}
+
+/**
+ * Fetch external IDs (IMDB, TVDB, etc.) for a TMDB title.
+ * Used to bridge TMDB ↔ OMDb ↔ Wyzie Subs.
+ */
+export async function fetchExternalIds(tmdbId, mediaType = 'movie') {
+  const apiKey = await getApiKey();
+  if (!apiKey || !tmdbId) return null;
+
+  try {
+    const res = await fetch(`${TMDB_BASE}/${mediaType}/${tmdbId}/external_ids?api_key=${apiKey}`);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('[TMDB] fetchExternalIds failed:', e);
+    return null;
+  }
+}
+
+/**
+ * Fetch detailed movie info (runtime, genres, production companies, etc.).
+ */
+export async function fetchMovieDetails(tmdbId) {
+  const apiKey = await getApiKey();
+  if (!apiKey || !tmdbId) return null;
+
+  try {
+    const res = await fetch(
+      `${TMDB_BASE}/movie/${tmdbId}?api_key=${apiKey}&append_to_response=credits,release_dates`
+    );
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (e) {
+    console.error('[TMDB] fetchMovieDetails failed:', e);
+    return null;
+  }
+}
+
+/**
+ * Fetch content/age ratings (PG-13, R, etc.) for a title in a specific region.
+ */
+export async function fetchContentRatings(tmdbId, mediaType = 'movie', region = 'US') {
+  const apiKey = await getApiKey();
+  if (!apiKey || !tmdbId) return null;
+
+  try {
+    const endpoint = mediaType === 'tv' ? 'content_ratings' : 'release_dates';
+    const res = await fetch(`${TMDB_BASE}/${mediaType}/${tmdbId}/${endpoint}?api_key=${apiKey}`);
+    if (!res.ok) return null;
+
+    const data = await res.json();
+
+    if (mediaType === 'tv') {
+      // TV: data.results = [{ iso_3166_1: "US", rating: "TV-MA" }]
+      const regionRating = (data.results || []).find(r => r.iso_3166_1 === region);
+      return regionRating?.rating || null;
+    } else {
+      // Movie: data.results = [{ iso_3166_1: "US", release_dates: [{ certification: "PG-13" }] }]
+      const regionData = (data.results || []).find(r => r.iso_3166_1 === region);
+      if (regionData?.release_dates) {
+        const theatrical = regionData.release_dates.find(rd => rd.certification);
+        return theatrical?.certification || null;
+      }
+      return null;
+    }
+  } catch (e) {
+    console.error('[TMDB] fetchContentRatings failed:', e);
+    return null;
+  }
 }
 
 export const OTT_PROVIDERS = [
